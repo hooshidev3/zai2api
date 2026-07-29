@@ -32,12 +32,14 @@ type Server struct {
         httpSrv    *http.Server
         accounts   *AccountManager
         db         *sql.DB
+        stats      *StatsCollector
+        startTime  time.Time
 }
 
 // NewServer creates and configures the gateway.
 func NewServer(cfg *Config) (*Server, error) {
         // 0. Initialize gateway DB (accounts, features, request_log)
-        gwDB, err := InitDB(getenv("ACCOUNTS_DB", "./data/accounts.sqlite"))
+        gwDB, err := InitDB(cfg.AccountsDB)
         if err != nil {
                 log.Printf("⚠️  Gateway DB init failed: %v", err)
         }
@@ -45,7 +47,7 @@ func NewServer(cfg *Config) (*Server, error) {
         // 0a. Initialize AccountManager
         var am *AccountManager
         if gwDB != nil {
-                am = NewAccountManager(gwDB, getenv("ZAI_STRATEGY", "round-robin"))
+                am = NewAccountManager(gwDB, cfg.ZAIStrategy)
         }
 
         // 1. Initialize GLM provider
@@ -80,6 +82,10 @@ func NewServer(cfg *Config) (*Server, error) {
                 log.Printf("warning: SetTrustedProxies failed: %v", err)
         }
 
+        // Load HTML templates and serve static files
+        r.LoadHTMLGlob("templates/*")
+        r.Static("/static", "./static")
+
         s := &Server{
                 cfg:        cfg,
                 glm:        glmProv,
@@ -87,6 +93,8 @@ func NewServer(cfg *Config) (*Server, error) {
                 mimoEngine: mimoSub,
                 accounts:   am,
                 db:         gwDB,
+                stats:      NewStatsCollector(),
+                startTime:  time.Now(),
         }
 
         // Start retention job for request_log
@@ -101,7 +109,23 @@ func NewServer(cfg *Config) (*Server, error) {
 func (s *Server) mountRoutes() {
         r := s.router
 
+        // Stats middleware (records every request)
+        r.Use(s.stats.Middleware())
+
+        // Health (no auth — for monitoring)
         r.GET("/health", s.handleHealth)
+
+        // Login routes (no auth required)
+        r.GET("/login", s.handleLoginPage)
+        r.POST("/login", s.handleLoginSubmit)
+        r.GET("/logout", s.handleLogout)
+
+        // Dashboard (behind DashboardAuthMiddleware)
+        dashboardMW := DashboardAuthMiddleware(s.cfg.DashboardToken)
+        r.GET("/", dashboardMW, s.handleDashboard)
+
+        // SSE stats stream (behind dashboard auth)
+        r.GET("/api/v1/stats/stream", dashboardMW, s.handleStatsStream)
 
         apiAuth := auth.GatewayAuthMiddleware(s.cfg.GatewayToken)
 
@@ -142,37 +166,10 @@ func (s *Server) mountRoutes() {
                         apiGroup.DELETE("/accounts/:id", s.handleDeleteAccount)
                         apiGroup.POST("/accounts/:id/toggle", s.handleToggleAccount)
                         apiGroup.POST("/accounts/:id/test", s.handleTestAccount)
+                        apiGroup.GET("/models", s.handleAggregatedModels)
+                        apiGroup.PUT("/models/:id/features", s.handleUpdateModelFeatures)
                 }
         }
-
-        // Root — simple info page (no token displayed for security)
-        r.GET("/", func(c *gin.Context) {
-                c.Header("Content-Type", "text/html; charset=utf-8")
-                c.String(200, `<!DOCTYPE html>
-<html><head><title>zai2api Gateway</title>
-<style>body{font-family:monospace;background:#0d1117;color:#c9d1d9;padding:40px;max-width:800px;margin:0 auto}
-a{color:#58a6ff}h1{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:10px}
-code{background:#21262d;padding:2px 6px;border-radius:4px}</style>
-</head><body>
-<h1>zai2api — Unified AI Gateway</h1>
-<p>Single endpoint for GLM (Z.AI) and MiMo (Xiaomi) providers.</p>
-<h3>Endpoints</h3>
-<ul>
-<li><code>POST /v1/chat/completions</code> — OpenAI-compatible (dispatches by model)</li>
-<li><code>POST /v1/messages</code> — Anthropic-compatible (GLM only)</li>
-<li><code>GET  /v1/models</code> — Aggregated model list</li>
-<li><code>GET  /health</code> — Health check</li>
-<li><code>/glm/*</code> — GLM-specific routes</li>
-<li><code>/mimo/*</code> — MiMo-specific routes</li>
-<li><code>/v1/agent/*</code> — MiMo agent routes</li>
-</ul>
-<h3>Quick test</h3>
-<pre>curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer &lt;YOUR_GATEWAY_TOKEN&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"glm-5","messages":[{"role":"user","content":"Hello"}]}'</pre>
-</body></html>`)
-        })
 }
 
 // Run starts the HTTP server.
@@ -223,21 +220,24 @@ func (s *Server) handleHealth(c *gin.Context) {
 
 // handleModels returns an aggregated list of GLM + MiMo models.
 func (s *Server) handleModels(c *gin.Context) {
-        // Collect models from both providers in parallel
         type modelItem struct {
-                ID      string `json:"id"`
-                Object  string `json:"object"`
-                OwnedBy string `json:"owned_by"`
+                ID       string `json:"id"`
+                Object   string `json:"object"`
+                OwnedBy  string `json:"owned_by"`
+                Provider string `json:"_provider"`
         }
 
         var models []modelItem
 
-        // GLM models (static fallback list — in Phase 3, fetch from provider)
+        // GLM models — try to fetch from provider, fallback to static list
         if s.glm != nil {
-                glmModels := []string{"glm-5", "glm-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"}
+                glmModels := s.glm.FetchModels()
+                if len(glmModels) == 0 {
+                        glmModels = []string{"glm-5", "glm-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"}
+                }
                 for _, m := range glmModels {
                         models = append(models, modelItem{
-                                ID: m, Object: "model", OwnedBy: "zai",
+                                ID: m, Object: "model", OwnedBy: "zai", Provider: "glm",
                         })
                 }
         }
@@ -254,7 +254,7 @@ func (s *Server) handleModels(c *gin.Context) {
                 if json.Unmarshal(mimoResp, &mimoList) == nil {
                         for _, m := range mimoList.Data {
                                 models = append(models, modelItem{
-                                        ID: m.ID, Object: "model", OwnedBy: m.OwnedBy,
+                                        ID: m.ID, Object: "model", OwnedBy: m.OwnedBy, Provider: "mimo",
                                 })
                         }
                 }

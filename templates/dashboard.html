@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>zai2api — Dashboard</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div>
+            <h1>zai2api Gateway<span class="version">v{{.Version}}</span></h1>
+        </div>
+        <div class="header-right">
+            <span id="connection-status" class="status-reconnecting">○ Connecting...</span>
+            <a href="/logout" class="btn btn-sm">Logout</a>
+        </div>
+    </header>
+
+    <div class="layout">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <a class="nav-item active" data-tab="overview">
+                <span class="icon">📊</span> Overview
+            </a>
+            <a class="nav-item" data-tab="accounts">
+                <span class="icon">👥</span> Accounts
+                <span class="badge" id="accounts-badge">{{.GLMCount}}+{{.MimoCount}}</span>
+            </a>
+            <a class="nav-item" data-tab="models">
+                <span class="icon">🤖</span> Models
+            </a>
+        </nav>
+
+        <!-- Main content -->
+        <main class="main">
+            <!-- ═══ Overview Tab ═══ -->
+            <section id="overview" class="tab-content active">
+                <!-- KPI Cards -->
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Requests</div>
+                        <div class="kpi-value" id="kpi-requests">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Avg Latency</div>
+                        <div class="kpi-value" id="kpi-latency">0ms</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Error Rate</div>
+                        <div class="kpi-value" id="kpi-errors">0.0%</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Uptime</div>
+                        <div class="kpi-value" id="kpi-uptime">0m</div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="chart-grid">
+                    <div class="chart-card">
+                        <h3>Requests / 2s</h3>
+                        <canvas id="chart-requests"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Errors / 2s</h3>
+                        <canvas id="chart-errors"></canvas>
+                    </div>
+                </div>
+
+                <!-- Recent Requests -->
+                <div class="card">
+                    <h3>Recent Requests</h3>
+                    <table class="table" id="recent-requests">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Provider</th>
+                                <th>Model</th>
+                                <th>Account</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ═══ Accounts Tab ═══ -->
+            <section id="accounts" class="tab-content">
+                <!-- Z.AI Accounts -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                        <h3 style="margin:0">Z.AI Accounts ({{.GLMCount}})</h3>
+                        <button class="btn btn-primary btn-sm" onclick="openAddAccountModal('glm')">+ Add Z.AI Account</button>
+                    </div>
+                    <table class="table" id="glm-accounts">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Token</th>
+                                <th>Proxy</th>
+                                <th>Reqs</th>
+                                <th>Errors</th>
+                                <th>Latency</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No accounts. Click "Add Z.AI Account" to create one.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- MiMo Accounts -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                        <h3 style="margin:0">MiMo Accounts ({{.MimoCount}})</h3>
+                        <button class="btn btn-primary btn-sm" onclick="openAddAccountModal('mimo')">+ Add MiMo Account</button>
+                    </div>
+                    <table class="table" id="mimo-accounts">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Service Token</th>
+                                <th>Proxy</th>
+                                <th>Reqs</th>
+                                <th>Errors</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="8" style="text-align:center;color:var(--text-muted)">No accounts. Click "Add MiMo Account" to create one.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ═══ Models Tab ═══ -->
+            <section id="models" class="tab-content">
+                <div class="card">
+                    <h3>Available Models</h3>
+                    <table class="table" id="models-table">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>Provider</th>
+                                <th>Owned By</th>
+                                <th>Thinking</th>
+                                <th>Web Search</th>
+                                <th>Auto Search</th>
+                                <th>Preview</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="8" style="text-align:center;color:var(--text-muted)">Loading models...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- ═══ Add Account Modal ═══ -->
+    <div id="add-account-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Add Account</h2>
+                <button class="modal-close" onclick="closeAddAccountModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="account-form" onsubmit="return false">
+                    <input type="hidden" id="account-provider">
+
+                    <div class="form-group">
+                        <label>Account ID *</label>
+                        <input type="text" id="account-id" placeholder="e.g., zai-prod-1" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text" id="account-display-name" placeholder="e.g., Production Account #1">
+                    </div>
+
+                    <!-- GLM fields -->
+                    <div id="glm-fields">
+                        <div class="form-group">
+                            <label>Z.AI Token *</label>
+                            <input type="password" id="account-zai-token" placeholder="eyJhbG...">
+                        </div>
+                    </div>
+
+                    <!-- MiMo fields -->
+                    <div id="mimo-fields" class="hidden">
+                        <div class="form-group">
+                            <label>Service Token *</label>
+                            <input type="text" id="account-service-token">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>User ID *</label>
+                                <input type="text" id="account-user-id">
+                            </div>
+                            <div class="form-group">
+                                <label>Xiaomi Chatbot PH *</label>
+                                <input type="text" id="account-xiaomichatbot-ph">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Proxy section -->
+                    <div class="form-section">
+                        <h3>Proxy (Optional)</h3>
+                        <div class="form-group">
+                            <div class="radio-group">
+                                <label><input type="radio" name="proxy-type" value="" checked> None</label>
+                                <label><input type="radio" name="proxy-type" value="http"> HTTP</label>
+                                <label><input type="radio" name="proxy-type" value="socks5"> SOCKS5</label>
+                            </div>
+                        </div>
+                        <div id="proxy-fields" class="hidden">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Host *</label>
+                                    <input type="text" id="proxy-host" placeholder="10.0.0.1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Port *</label>
+                                    <input type="number" id="proxy-port" placeholder="1080">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Username</label>
+                                    <input type="text" id="proxy-username">
+                                </div>
+                                <div class="form-group">
+                                    <label>Password</label>
+                                    <input type="password" id="proxy-password">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea id="account-notes" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeAddAccountModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveAccount()">Save Account</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/sse.js"></script>
+    <script src="/static/js/charts.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/accounts.js"></script>
+    <script src="/static/js/models.js"></script>
+</body>
+</html>
