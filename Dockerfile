@@ -37,9 +37,8 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 
 WORKDIR /app
 
+# Binary is self-contained — templates and static assets are embedded via //go:embed
 COPY --from=builder /out/zai2api /app/zai2api
-COPY templates/ /app/templates/
-COPY static/ /app/static/
 
 RUN mkdir -p /app/data && chown -R app:app /app
 

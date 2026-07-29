@@ -9,6 +9,8 @@ package server
 
 import (
         "bytes"
+        "crypto/rand"
+        "encoding/hex"
         "encoding/json"
         "fmt"
         "io"
@@ -499,11 +501,20 @@ func (r *anthropicRecorder) WriteHeader(code int)        { r.code = code }
 
 // ── Helper: SSE stream writer for streaming ───────────────────────
 
+// anthropicStreamWriter wraps the gin ResponseWriter and translates
+// OpenAI-format SSE chunks (produced by the MiMo sub-engine) into
+// Anthropic-format SSE events sent to the client.
+//
+// A buf field is essential: SSE chunks may be split across multiple
+// Write() calls (the sub-engine flushes in arbitrary boundaries).
+// Without buffering, a "data: {...}" line that arrives in two halves
+// would fail to parse.
 type anthropicStreamWriter struct {
         w           gin.ResponseWriter
         model       string
         msgID       string
         blockOpened bool
+        buf         string // accumulator for incomplete lines between Write() calls
 }
 
 func (w *anthropicStreamWriter) Header() http.Header         { return w.w.Header() }
@@ -543,59 +554,72 @@ func (w *anthropicStreamWriter) writeMessageStop() {
         w.writeSSE("message_stop", map[string]any{"type": "message_stop"})
 }
 
-// translateAndWrite translates each OpenAI SSE chunk to Anthropic format.
+// translateAndWrite buffers incoming bytes and processes only complete
+// (newline-terminated) lines. This is critical because the MiMo sub-engine
+// may flush in arbitrary chunk boundaries — a single "data: {...}\n" line
+// could arrive as two separate Write() calls.
 func (w *anthropicStreamWriter) translateAndWrite(b []byte) (int, error) {
-        lines := strings.Split(string(b), "\n")
-        for _, line := range lines {
-                line = strings.TrimSpace(line)
-                if !strings.HasPrefix(line, "data: ") {
-                        continue
+        w.buf += string(b)
+        for {
+                idx := strings.Index(w.buf, "\n")
+                if idx == -1 {
+                        break // no complete line yet
                 }
-                payload := strings.TrimPrefix(line, "data: ")
-                if payload == "[DONE]" {
-                        continue
-                }
-
-                var chunk struct {
-                        Choices []struct {
-                                Delta struct {
-                                        Content string `json:"content"`
-                                } `json:"delta"`
-                        } `json:"choices"`
-                }
-                if json.Unmarshal([]byte(payload), &chunk) != nil {
-                        continue
-                }
-
-                for _, choice := range chunk.Choices {
-                        if choice.Delta.Content == "" {
-                                continue
-                        }
-                        if !w.blockOpened {
-                                w.writeSSE("content_block_start", map[string]any{
-                                        "type":          "content_block_start",
-                                        "index":         0,
-                                        "content_block": map[string]any{"type": "text", "text": ""},
-                                })
-                                w.blockOpened = true
-                        }
-                        w.writeSSE("content_block_delta", map[string]any{
-                                "type":  "content_block_delta",
-                                "index": 0,
-                                "delta": map[string]any{"type": "text_delta", "text": choice.Delta.Content},
-                        })
-                }
+                line := strings.TrimSpace(w.buf[:idx])
+                w.buf = w.buf[idx+1:]
+                w.processLine(line)
         }
         return len(b), nil
 }
 
-// randomID generates a simple random ID.
-func randomID() string {
-        const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-        b := make([]byte, 24)
-        now := time.Now().UnixNano()
-        for i := range b {
-                b[i] = chars[(now+int64(i*17))%int64(len(chars))]
+// processLine parses a single OpenAI-format SSE line and emits the
+// corresponding Anthropic SSE event(s).
+func (w *anthropicStreamWriter) processLine(line string) {
+        if !strings.HasPrefix(line, "data: ") {
+                return // ignore comments, empty lines, event: prefixes
         }
-        return string(b)
+        payload := strings.TrimPrefix(line, "data: ")
+        if payload == "[DONE]" {
+                return // message_stop is emitted by writeMessageStop()
+        }
+
+        var chunk struct {
+                Choices []struct {
+                        Delta struct {
+                                Content string `json:"content"`
+                        } `json:"delta"`
+                } `json:"choices"`
+        }
+        if json.Unmarshal([]byte(payload), &chunk) != nil {
+                return
+        }
+
+        for _, choice := range chunk.Choices {
+                if choice.Delta.Content == "" {
+                        continue
+                }
+                if !w.blockOpened {
+                        w.writeSSE("content_block_start", map[string]any{
+                                "type":          "content_block_start",
+                                "index":         0,
+                                "content_block": map[string]any{"type": "text", "text": ""},
+                        })
+                        w.blockOpened = true
+                }
+                w.writeSSE("content_block_delta", map[string]any{
+                        "type":  "content_block_delta",
+                        "index": 0,
+                        "delta": map[string]any{"type": "text_delta", "text": choice.Delta.Content},
+                })
+        }
+}
+
+// randomID generates a 24-character hex ID using crypto/rand.
+// Falls back to time-based ID only if /dev/urandom is unavailable.
+func randomID() string {
+        b := make([]byte, 12) // 12 bytes → 24 hex chars
+        if _, err := rand.Read(b); err != nil {
+                return fmt.Sprintf("%x", time.Now().UnixNano())
+        }
+        return hex.EncodeToString(b)
 }

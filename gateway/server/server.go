@@ -7,7 +7,9 @@ import (
         "database/sql"
         "encoding/json"
         "fmt"
+        "html/template"
         "io"
+        "io/fs"
         "log"
         "net/http"
         "os"
@@ -15,6 +17,7 @@ import (
         "sync"
         "time"
 
+        "zai2api"
         "zai2api/gateway/auth"
 
         "github.com/gin-gonic/gin"
@@ -86,9 +89,15 @@ func NewServer(cfg *Config) (*Server, error) {
                 log.Printf("warning: SetTrustedProxies failed: %v", err)
         }
 
-        // Load HTML templates and serve static files
-        r.LoadHTMLGlob("templates/*")
-        r.Static("/static", "./static")
+        // Load HTML templates from embedded assets (no filesystem dependency)
+        r.SetHTMLTemplate(loadEmbeddedTemplates())
+
+        // Serve static files from embedded assets (no directory listing)
+        staticFS, err := fs.Sub(zai2api.Assets, "static")
+        if err != nil {
+                return nil, fmt.Errorf("embed static: %w", err)
+        }
+        r.StaticFS("/static", noDirFS{http.FS(staticFS)})
 
         s := &Server{
                 cfg:         cfg,
@@ -543,3 +552,51 @@ func (b *bodyReader) Read(p []byte) (int, error) {
 }
 
 func (b *bodyReader) Close() error { return nil }
+
+// ── Embedded asset helpers ────────────────────────────────────────
+
+// loadEmbeddedTemplates parses HTML templates from the embedded assets FS.
+// Each template is registered with its base filename (e.g., "dashboard.html"),
+// so handlers that call c.HTML(200, "dashboard.html", ...) work unchanged.
+func loadEmbeddedTemplates() *template.Template {
+        tmpl := template.New("")
+        entries, err := fs.ReadDir(zai2api.Assets, "templates")
+        if err != nil {
+                panic("templates not embedded — build with `go build ./cmd/server` from project root: " + err.Error())
+        }
+        for _, e := range entries {
+                if e.IsDir() || !strings.HasSuffix(e.Name(), ".html") {
+                        continue
+                }
+                data, err := zai2api.Assets.ReadFile("templates/" + e.Name())
+                if err != nil {
+                        panic("read embedded template " + e.Name() + ": " + err.Error())
+                }
+                template.Must(tmpl.New(e.Name()).Parse(string(data)))
+        }
+        return tmpl
+}
+
+// noDirFS wraps an http.FileSystem to disable directory listing.
+// Without this, http.FileServer would expose the list of files in
+// directories under /static/, which is an information leak.
+type noDirFS struct {
+        http.FileSystem
+}
+
+func (n noDirFS) Open(name string) (http.File, error) {
+        f, err := n.FileSystem.Open(name)
+        if err != nil {
+                return nil, err
+        }
+        stat, err := f.Stat()
+        if err != nil {
+                f.Close()
+                return nil, err
+        }
+        if stat.IsDir() {
+                f.Close()
+                return nil, os.ErrNotExist // directory listing forbidden
+        }
+        return f, nil
+}

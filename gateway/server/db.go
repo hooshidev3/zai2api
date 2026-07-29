@@ -4,7 +4,10 @@ package server
 
 import (
         "database/sql"
+        "fmt"
         "log"
+        "os"
+        "path/filepath"
         "time"
 
         _ "modernc.org/sqlite"
@@ -13,6 +16,14 @@ import (
 // InitDB opens the SQLite database, configures WAL mode and auto_vacuum,
 // and creates all required tables if they don't exist.
 func InitDB(path string) (*sql.DB, error) {
+        // Create parent directory if it doesn't exist (fixes SQLite error 14:
+        // "unable to open database file" when the data/ directory is missing).
+        if dir := filepath.Dir(path); dir != "" && dir != "." {
+                if err := os.MkdirAll(dir, 0755); err != nil {
+                        return nil, fmt.Errorf("create db directory %q: %w", dir, err)
+                }
+        }
+
         db, err := sql.Open("sqlite", path)
         if err != nil {
                 return nil, err
