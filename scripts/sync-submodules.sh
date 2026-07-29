@@ -4,10 +4,15 @@
 # This script updates each submodule to the latest upstream commit, then
 # rebases our 'merged-patches' branch on top of it.
 #
+# Handles:
+#   - Submodules in detached HEAD (common after `git submodule update`)
+#   - Missing upstream remote (adds it automatically)
+#   - Uncommitted changes (aborts with clear message)
+#   - Rebase conflicts (shows resolution instructions)
+#
 # Prerequisites:
-#   - Each submodule has 'origin' pointing to our fork (hooshidev3/...)
-#   - Each submodule has 'upstream' pointing to the original repo
-#   - You have push access to the forks
+#   - Submodules initialized (git submodule update --init --recursive)
+#   - Push access to forks (hooshidev3/...)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,20 +25,43 @@ sync_submodule() {
     local name="$1" path="$2" upstream_url="$3"
 
     log "Syncing $name..."
+
+    # Check if submodule directory exists and is a git repo
+    # Use git rev-parse which works for both submodules (.git file) and
+    # regular clones (.git directory)
+    if ! git -C "$DIR/$path" rev-parse --git-dir >/dev/null 2>&1; then
+        err "$name at '$path' is not a git repository."
+        err "Run: git submodule update --init --recursive"
+        return 1
+    fi
+
     cd "$DIR/$path"
 
-    # Verify we're on the right branch
+    # Submodules are often in detached HEAD after `git submodule update`.
+    # Switch to merged-patches branch first.
     local branch
     branch=$(git rev-parse --abbrev-ref HEAD)
     if [ "$branch" != "merged-patches" ]; then
-        err "$name is on '$branch', expected 'merged-patches'"
-        err "Run: cd $path && git checkout merged-patches"
-        return 1
+        if [ "$branch" = "HEAD" ]; then
+            log "$name is in detached HEAD (normal after submodule init). Switching to merged-patches..."
+        else
+            log "$name is on '$branch', switching to merged-patches..."
+        fi
+        if ! git checkout merged-patches 2>/dev/null; then
+            err "Cannot checkout merged-patches in $name."
+            err "The branch may not exist. Run:"
+            err "  cd $path && git fetch origin && git checkout merged-patches"
+            cd "$DIR"
+            return 1
+        fi
+        ok "Switched to merged-patches"
     fi
 
     # Check working tree is clean
     if ! git diff --quiet || ! git diff --cached --quiet; then
-        err "$name has uncommitted changes. Commit or stash first."
+        err "$name has uncommitted changes. Commit or stash first:"
+        err "  cd $path && git status"
+        cd "$DIR"
         return 1
     fi
 
@@ -44,6 +72,7 @@ sync_submodule() {
     fi
 
     # Fetch upstream
+    log "Fetching upstream..."
     git fetch upstream main
 
     local base head
@@ -59,17 +88,21 @@ sync_submodule() {
     local our_commits new_commits
     our_commits=$(git log --oneline upstream/main..merged-patches 2>/dev/null | wc -l)
     new_commits=$(git rev-list --count merged-patches..upstream/main 2>/dev/null || echo "0")
-    log "Rebasing $our_commits commits onto $new_commits new upstream commits..."
+    log "Rebasing $our_commits commit(s) onto $new_commits new upstream commit(s)..."
 
     # Rebase
     if git rebase upstream/main; then
         ok "$name rebase successful"
     else
         err "$name rebase conflict! Resolve manually:"
+        err ""
         err "  cd $path"
-        err "  # edit conflicted files (KEEP OUR PATCHES!)"
-        err "  git add <files> && git rebase --continue"
+        err "  # Edit conflicted files (KEEP OUR PATCHES!)"
+        err "  git add <files>"
+        err "  git rebase --continue"
         err "  git push --force-with-lease origin merged-patches"
+        err ""
+        err "  To abort: git rebase --abort"
         cd "$DIR"
         return 1
     fi

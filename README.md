@@ -24,7 +24,9 @@ cd zai2api
 # If you forgot --recursive:
 git submodule update --init --recursive
 
-# Build and run
+# Build and run (copy .env.example first!)
+cp .env.example .env
+# Edit .env: set GATEWAY_TOKEN, SERVICE_TOKENS, etc.
 make build
 make run
 ```
@@ -107,7 +109,15 @@ XIAOMI_CHATBOT_PHS="ph1,ph2,ph3"
 | `mimo*` | MiMo (Xiaomi) |
 | (default) | GLM |
 
-## Architecture
+## Architecture: Submodule + Branch/Rebase
+
+`glm/` and `mimo/` are **git submodules** pointing to our forks
+(`hooshidev3/GLM-Free-API` and `hooshidev3/mimo-ai-proxy`). Each fork has a
+`merged-patches` branch where our integration patches live as real git commits.
+
+Syncing with upstream uses `git fetch + git rebase` (not fragile unidiff patch
+files). This combines the best of both worlds: `git clone --recursive` brings
+everything, and `make sync` rebases our patches on top of new upstream changes.
 
 ```
 zai2api/
@@ -131,6 +141,7 @@ zai2api/
 │   └── mimo-patches/               # MiMo patch scripts + templates
 ├── spike/                          # Prototype proving authctx works
 ├── AGENTS.md                       # Guide for AI agents
+├── .env.example                    # Environment variable template
 └── Makefile
 ```
 
@@ -152,9 +163,10 @@ If rebase conflicts occur, follow the on-screen instructions to resolve.
 
 ## Key design decisions
 
-1. **Git submodules (fork-based)** — `glm/` and `mimo/` are submodules pointing to
-   our forks. This is the industry-standard approach for vendoring patched dependencies.
-   `git clone --recursive` brings everything.
+1. **Git submodules (fork-based) + branch/rebase** — `glm/` and `mimo/` are
+   submodules pointing to our forks. Each fork has a `merged-patches` branch
+   with our patches as real git commits. `git clone --recursive` brings everything;
+   `make sync` rebases on top of new upstream commits. No fragile patch files.
 
 2. **`authctx` package** — A leaf package (no dependencies) inside MiMo that breaks
    the import cycle between gateway and MiMo's services package.
