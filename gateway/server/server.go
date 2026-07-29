@@ -146,6 +146,7 @@ func (s *Server) mountRoutes() {
                 v1.GET("/models", s.handleModels)
                 v1.POST("/chat/completions", s.handleChatCompletions)
                 v1.POST("/messages", s.handleAnthropicMessages)
+                v1.POST("/files", s.handleFileUpload)
         }
 
         if s.glm != nil {
@@ -419,27 +420,7 @@ func (s *Server) forwardToMiMoWithAccount(c *gin.Context) {
         c.Abort()
 }
 
-func (s *Server) handleAnthropicMessages(c *gin.Context) {
-        if s.glm == nil {
-                c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "glm_unavailable", "message": "GLM provider not initialized"}})
-                return
-        }
-
-        // Per-account if AccountManager available
-        if s.accounts != nil {
-                acct, err := s.accounts.Next(ProviderGLM)
-                if err == nil {
-                        c.Set("account_id", acct.ID)
-                        client := GetHTTPClient(acct.ID, acct.Proxy, 0)
-                        s.glm.AnthropicMessagesWithAccount(c.Writer, c.Request, acct.ID, acct.ZaiToken, client)
-                        c.Abort()
-                        return
-                }
-        }
-
-        s.glm.AnthropicMessagesHandler(c.Writer, c.Request)
-        c.Abort()
-}
+// handleAnthropicMessages is now in anthropic_bridge.go (supports GLM + MiMo translation)
 
 // forwardToMiMo strips the /mimo prefix before forwarding to the sub-engine.
 func (s *Server) forwardToMiMo(c *gin.Context) {

@@ -1,4 +1,4 @@
-// agents.js — MiMo Agents monitoring
+// agents.js — MiMo Agents monitoring with GLM limitation note
 
 async function loadAgents() {
     try {
@@ -19,8 +19,24 @@ function renderAgents(agents) {
     const tbody = document.querySelector('#agents-table tbody');
     if (!tbody) return;
 
+    // GLM agent note (shown above the table)
+    const noteEl = document.getElementById('glm-agent-note');
+    if (noteEl && !noteEl.dataset.rendered) {
+        noteEl.innerHTML = `
+            <div style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+                <strong>ℹ️ GLM Agent Mode:</strong>
+                GLM از agent loop واقعی پشتیبانی نمی‌کند.
+                «Agent mode» در GLM فقط ترجمه tool-calling است
+                (OpenAI tools ↔ Z.AI text contract).
+                برای agent loop واقعی (planner/critic/executor)،
+                از مدل‌های MiMo استفاده کنید.
+            </div>
+        `;
+        noteEl.dataset.rendered = 'true';
+    }
+
     if (!agents || agents.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No active agents.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">No active MiMo agents.</td></tr>';
         return;
     }
 
@@ -47,7 +63,6 @@ function renderAgents(agents) {
 }
 
 function viewAgentStream(id) {
-    // Open a new window with the SSE stream
     const win = window.open('', '_blank', 'width=800,height=600');
     if (!win) {
         alert('Popup blocked. Please allow popups for this site.');
@@ -76,17 +91,4 @@ function viewAgentStream(id) {
         </body></html>
     `);
     win.document.close();
-}
-
-// Auto-refresh agents every 10 seconds when on the Agents tab
-let agentsInterval = null;
-function startAgentsAutoRefresh() {
-    if (agentsInterval) return;
-    agentsInterval = setInterval(loadAgents, 10000);
-}
-function stopAgentsAutoRefresh() {
-    if (agentsInterval) {
-        clearInterval(agentsInterval);
-        agentsInterval = null;
-    }
 }
