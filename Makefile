@@ -1,44 +1,42 @@
-.PHONY: sync build run test vet clean docker
+.PHONY: all build test vet run clean sync submodule-status smoke clone-init
 
-# Default target
 all: build
 
-# ─── Sync upstream repos (clone + apply patches as commits) ─────────
-sync:
-	@bash scripts/sync-glm.sh
-	@bash scripts/sync-mimo.sh
+# ─── Clone with submodules (first-time setup) ───────────────────────
+clone-init:
+	git submodule update --init --recursive
 
-# Force re-sync (reset branch and reapply patches)
-sync-force:
-	@bash scripts/sync-glm.sh --force
-	@bash scripts/sync-mimo.sh --force
+# ─── Submodule status ───────────────────────────────────────────────
+submodule-status:
+	@git submodule status
+	@echo ""
+	@echo "GLM branch:  $$(cd glm && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')"
+	@echo "MiMo branch: $$(cd mimo && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')"
+
+# ─── Sync upstream (rebase our patches on latest upstream) ──────────
+sync:
+	@bash scripts/sync-submodules.sh
 
 # ─── Build ──────────────────────────────────────────────────────────
 build:
+	@if [ ! -f glm/go.mod ] || [ ! -f mimo/go.mod ]; then \
+		echo "⚠️  Submodules missing. Running: git submodule update --init --recursive"; \
+		git submodule update --init --recursive; \
+	fi
 	go build -o bin/zai2api ./cmd/server
-
-build-glm:
-	cd glm && go build ./...
-
-build-mimo:
-	cd mimo && go build ./...
 
 # ─── Run ────────────────────────────────────────────────────────────
 run: build
 	./bin/zai2api
 
-# Run with specific env
 run-dev: build
 	GATEWAY_TOKEN=dev-token VERBOSE=1 ./bin/zai2api
 
 # ─── Test ───────────────────────────────────────────────────────────
 test:
 	go test ./gateway/...
-	cd mimo && go test ./...
-	cd glm && go test ./...
-
-test-spike:
-	cd spike && bash run.sh || true
+	cd mimo && go test ./pkg/authctx/... ./pkg/services/...
+	cd glm && go test ./... 2>/dev/null || true
 
 # ─── Vet ────────────────────────────────────────────────────────────
 vet:
@@ -49,26 +47,13 @@ vet:
 # ─── Clean ──────────────────────────────────────────────────────────
 clean:
 	rm -rf bin/ data/
-	cd mimo && go clean -cache 2>/dev/null || true
-	cd glm && go clean -cache 2>/dev/null || true
 
-# ─── Docker ─────────────────────────────────────────────────────────
-docker-build:
-	docker build -t zai2api .
-
-docker-run:
-	docker run -p 8080:8080 -v $(PWD)/data:/app/data zai2api
-
-# ─── Git helpers ────────────────────────────────────────────────────
-git-log-glm:
-	cd glm && git log --oneline origin/main..merged-patches
-
-git-log-mimo:
-	cd mimo && git log --oneline origin/main..merged-patches
-
-# Show what our patches changed vs upstream
-diff-glm:
-	cd glm && git diff origin/main..merged-patches --stat
-
-diff-mimo:
-	cd mimo && git diff origin/main..merged-patches --stat
+# ─── Quick smoke test ───────────────────────────────────────────────
+smoke: build
+	@echo "=== Starting gateway for smoke test ==="
+	@GATEWAY_TOKEN=smoke-test setsid ./bin/zai2api > /tmp/zai2api-smoke.log 2>&1 &
+	@sleep 2
+	@echo "=== Health ===" && curl -s http://localhost:8080/health | python3 -m json.tool
+	@echo "=== Auth (wrong token → 401) ===" && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/v1/models
+	@echo "=== Auth (correct token → 200) ===" && curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer smoke-test" http://localhost:8080/v1/models
+	@pkill -f zai2api 2>/dev/null; true

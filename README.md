@@ -3,10 +3,6 @@
 > Single endpoint for **GLM (Z.AI)** and **MiMo (Xiaomi)** AI providers.
 > One auth token, multi-account support, per-account proxy.
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
-[![Go Version](https://img.shields.io/badge/Go-1.25-blue)]()
-[![License](https://img.shields.io/badge/license-MIT-green)]()
-
 ## What is this?
 
 A unified HTTP gateway that combines two upstream AI proxy projects:
@@ -18,88 +14,28 @@ Instead of running two separate services with two endpoints and two auth tokens,
 zai2api provides a single endpoint (`POST /v1/chat/completions`) that dispatches
 to the right provider based on the `model` field in the request.
 
-## Architecture
-
-```
-                    ┌─────────────────────────────────────┐
-                    │     zai2api Gateway (:8080)         │
-                    │                                     │
-                    │  POST /v1/chat/completions          │
-                    │    ├─ model="glm-*"  → GLM provider │
-                    │    └─ model="mimo*"  → MiMo engine  │
-                    │                                     │
-                    │  POST /v1/messages (Anthropic)      │
-                    │  GET  /v1/models (aggregated)       │
-                    │  GET  /health                       │
-                    │  /glm/*   → GLM-specific routes     │
-                    │  /mimo/*  → MiMo-specific routes    │
-                    └──────────┬──────────────┬───────────┘
-                               │              │
-                    ┌──────────▼────┐  ┌──────▼─────────┐
-                    │ GLM Provider  │  │ MiMo Sub-engine│
-                    │ (package glm) │  │ (gin.Engine)   │
-                    └───────────────┘  └────────────────┘
-```
-
-## Key design decisions
-
-### 1. Branch + Rebase (not patch files)
-
-Each upstream provider is cloned into `glm/` and `mimo/` with a
-`merged-patches` branch that contains our modifications as real git commits.
-Syncing uses `git fetch + git rebase` instead of fragile unidiff patches.
-
-```
-glm/  (git clone, branch: merged-patches)
-├── .git/
-├── main.go          (package glm, func main() removed)
-├── provider.go      (Provider struct for gateway integration)
-├── exports.go       (public handler wrappers)
-└── cmd/token-collector/  (separate module, heavy deps)
-
-mimo/  (git clone, branch: merged-patches)
-├── .git/
-└── pkg/             (internal/ → pkg/ for cross-module import)
-    ├── authctx/     (shared context package, no deps)
-    ├── services/    (GetAuthFromContext, ResolveClient)
-    └── routes/      (per-account client threading)
-```
-
-### 2. `authctx` package breaks import cycle
-
-`authctx` is a leaf package (no dependencies) that lives inside MiMo.
-Both gateway and MiMo import it to share context key identity without
-creating an import cycle.
-
-### 3. Per-account proxy (Phase 3)
-
-Each account can have its own HTTP/SOCKS5 proxy. The gateway builds a
-per-account `*http.Client` and injects it into the request context via
-`authctx.WithClient()`. MiMo reads it via `services.GetAuthFromContext()`
-and threads it through all downstream calls using `ResolveClient()`.
-
 ## Quick start
 
 ```bash
-# 1. Clone this repo
-git clone https://github.com/hooshidev3/zai2api.git
+# Clone with submodules (important: --recursive)
+git clone --recursive https://github.com/hooshidev3/zai2api.git
 cd zai2api
 
-# 2. Sync upstream repos (clone + apply patches as commits)
-make sync
+# If you forgot --recursive:
+git submodule update --init --recursive
 
-# 3. Build
+# Build and run
 make build
-
-# 4. Configure (optional — defaults work for testing)
-export GATEWAY_TOKEN="your-secret-token"
-export GLM_CAPTCHA_DB="./data/tokens.sqlite"  # needed for GLM
-
-# 5. Run
 make run
 ```
 
 The gateway starts on `http://localhost:8080`.
+
+> ⚠️ `glm/` and `mimo/` are **git submodules** pointing to our forks:
+> - `glm/` → [hooshidev3/GLM-Free-API](https://github.com/hooshidev3/GLM-Free-API) (branch: `merged-patches`)
+> - `mimo/` → [hooshidev3/mimo-ai-proxy](https://github.com/hooshidev3/mimo-ai-proxy) (branch: `merged-patches`)
+>
+> Without `--recursive` or `make clone-init`, the build will fail.
 
 ## Usage
 
@@ -128,7 +64,7 @@ curl -X POST http://localhost:8080/v1/messages \
   }'
 ```
 
-### List models
+### List models (aggregated GLM + MiMo)
 
 ```bash
 curl http://localhost:8080/v1/models \
@@ -149,10 +85,9 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `LISTEN_ADDR` | `:8080` | Listen address |
 | `GATEWAY_TOKEN` | `sk-merged-default` | Auth token for API endpoints |
-| `DASHBOARD_TOKEN` | (empty) | Auth token for dashboard (empty = localhost only) |
 | `GLM_CAPTCHA_DB` | `./data/tokens.sqlite` | Path to GLM captcha database |
 | `VERBOSE` | `0` | Enable verbose logging |
-| `AGENT_MODE` | `0` | Enable GLM agent mode (captcha background cache) |
+| `AGENT_MODE` | `0` | Enable GLM agent mode |
 | `DEFAULT_MODEL` | `glm-5` | Default model when not specified |
 | `TRUSTED_PROXIES` | `127.0.0.1/32,::1/128` | Trusted proxy CIDRs |
 
@@ -164,11 +99,7 @@ USER_IDS="id1,id2,id3"
 XIAOMI_CHATBOT_PHS="ph1,ph2,ph3"
 ```
 
-MiMo automatically rotates between these accounts (random selection).
-
 ## Model routing
-
-The gateway dispatches based on the `model` field:
 
 | Model prefix | Provider |
 |--------------|----------|
@@ -176,35 +107,31 @@ The gateway dispatches based on the `model` field:
 | `mimo*` | MiMo (Xiaomi) |
 | (default) | GLM |
 
-## Project structure
+## Architecture
 
 ```
 zai2api/
 ├── cmd/server/main.go              # Entry point
 ├── gateway/
-│   ├── server/                     # Main gateway logic
-│   ├── auth/                       # GatewayAuthMiddleware
-│   └── proxy/                      # Per-account proxy (Phase 3)
-├── glm/                            # GLM-Free-API (git clone, merged-patches branch)
-├── mimo/                           # mimo-ai-proxy (git clone, merged-patches branch)
+│   ├── server/                     # Main gateway (dispatcher, handlers)
+│   └── auth/                       # Timing-safe auth middleware
+├── glm/                            # SUBMODULE → hooshidev3/GLM-Free-API
+│   ├── main.go                     # package glm (func main() removed)
+│   ├── provider.go                 # Provider struct
+│   ├── exports.go                  # Public handler wrappers
+│   └── cmd/token-collector/        # Separate binary (captcha collector)
+├── mimo/                           # SUBMODULE → hooshidev3/mimo-ai-proxy
+│   └── pkg/                        # internal/ → pkg/ for cross-module import
+│       ├── authctx/                # Shared context package (no deps)
+│       ├── services/               # GetAuthFromContext, ResolveClient
+│       └── routes/                 # Per-account client threading
 ├── scripts/
-│   ├── sync-glm.sh                 # Fetch + rebase GLM
-│   ├── sync-mimo.sh                # Fetch + rebase MiMo
-│   ├── glm-patches/
-│   │   ├── apply-all.sh            # First-time patch application
-│   │   ├── post-rebase.sh          # Mechanical fixes after rebase
-│   │   ├── remove-func-main.py     # Removes func main() safely
-│   │   └── templates/              # Template files for new code
-│   └── mimo-patches/
-│       ├── apply-all.sh
-│       ├── post-rebase.sh
-│       ├── add-getauthfromcontext.py
-│       ├── thread-client.py
-│       └── templates/
-├── spike/                          # Prototype that proves authctx works
-├── docs/                           # Architecture documents
-├── Makefile
-└── go.mod
+│   ├── sync-submodules.sh          # Rebase submodules on latest upstream
+│   ├── glm-patches/                # GLM patch scripts + templates
+│   └── mimo-patches/               # MiMo patch scripts + templates
+├── spike/                          # Prototype proving authctx works
+├── AGENTS.md                       # Guide for AI agents
+└── Makefile
 ```
 
 ## Syncing upstream updates
@@ -212,37 +139,70 @@ zai2api/
 When upstream repos release updates:
 
 ```bash
-# Fetch and rebase our patches on top of new upstream commits
+make sync
+```
+
+This script:
+1. Fetches latest from upstream (izaart95-jpg/GLM-Free-API, hugogadelha/mimo-ai-proxy)
+2. Rebases our `merged-patches` branch on top
+3. Force-pushes to our fork
+4. Updates the submodule pointer in zai2api
+
+If rebase conflicts occur, follow the on-screen instructions to resolve.
+
+## Key design decisions
+
+1. **Git submodules (fork-based)** — `glm/` and `mimo/` are submodules pointing to
+   our forks. This is the industry-standard approach for vendoring patched dependencies.
+   `git clone --recursive` brings everything.
+
+2. **`authctx` package** — A leaf package (no dependencies) inside MiMo that breaks
+   the import cycle between gateway and MiMo's services package.
+
+3. **`ResolveClient` helper** — Exported function that prevents nil-pointer panics
+   by falling back to `GlobalHTTPClient` then `http.DefaultClient`.
+
+4. **Timing-safe auth** — Uses `crypto/subtle.ConstantTimeCompare` to prevent
+   timing attacks on token validation.
+
+5. **Per-account proxy ready** — HTTP client is threaded through all 9 MiMo
+   functions via `authctx.WithClient()`, enabling per-account proxy in Phase 3.
+
+## Submodule workflow (for maintainers)
+
+### Updating submodules
+
+```bash
+# Check submodule status
+make submodule-status
+
+# Sync with upstream (rebase our patches)
 make sync
 
-# Or force a fresh reapply (if rebase gets stuck)
-make sync-force
+# After sync, push the updated pointers
+git push origin main
 ```
 
-Our patches are preserved as git commits. View them:
+### Making changes to submodules
 
 ```bash
-make git-log-glm   # Show our GLM commits
-make git-log-mimo  # Show our MiMo commits
-make diff-glm      # Show diff vs upstream
-make diff-mimo     # Show diff vs upstream
+# Enter submodule
+cd glm
+
+# Make changes and commit
+git add -A && git commit -m "patch(glm): description"
+
+# Push to fork
+git push origin merged-patches
+
+# Return to parent repo and update pointer
+cd ..
+git add glm
+git commit -m "chore: update glm submodule"
+git push origin main
 ```
 
-## Development
-
-```bash
-# Run all tests
-make test
-
-# Run vet
-make vet
-
-# Build
-make build
-
-# Run the spike (proves authctx + per-account proxy works)
-make test-spike
-```
+See [AGENTS.md](AGENTS.md) for detailed guidance.
 
 ## License
 

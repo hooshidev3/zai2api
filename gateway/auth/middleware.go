@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -9,7 +10,8 @@ import (
 )
 
 // GatewayAuthMiddleware validates the Authorization header against
-// the configured GATEWAY_TOKEN. If token is empty, auth is disabled.
+// the configured GATEWAY_TOKEN using timing-safe comparison.
+// If token is empty, auth is disabled.
 func GatewayAuthMiddleware(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token == "" {
@@ -29,7 +31,8 @@ func GatewayAuthMiddleware(token string) gin.HandlerFunc {
 		}
 
 		provided := strings.TrimPrefix(authHeader, "Bearer ")
-		if provided != token {
+		// Use constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": gin.H{
 					"type":    "authentication_error",

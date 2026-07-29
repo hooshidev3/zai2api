@@ -1,6 +1,4 @@
-# Dependencies
-glm/
-mimo/
+# Build artifacts
 bin/
 data/
 *.sqlite

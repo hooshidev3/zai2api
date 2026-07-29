@@ -6,7 +6,6 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	glm-free-api v0.0.0
 	mimoproxy v0.0.0
-	modernc.org/sqlite v1.50.0
 )
 
 require (
@@ -46,6 +45,7 @@ require (
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.50.0 // indirect
 )
 
 replace (

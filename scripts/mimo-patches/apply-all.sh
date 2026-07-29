@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/../../" && pwd)"
-MIMO_DIR="$DIR/mimo"
+MIMO_DIR="${MIMO_DIR:-$DIR/mimo}"
 PATCHES_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$MIMO_DIR"

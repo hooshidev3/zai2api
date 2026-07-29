@@ -3,7 +3,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,7 +13,6 @@ import (
 	"time"
 
 	"zai2api/gateway/auth"
-	"zai2api/gateway/proxy"
 
 	"github.com/gin-gonic/gin"
 	glmapi "glm-free-api"
@@ -25,6 +26,7 @@ type Server struct {
 	glm        *glmapi.Provider
 	router     *gin.Engine
 	mimoEngine *gin.Engine
+	httpSrv    *http.Server
 }
 
 // NewServer creates and configures the gateway.
@@ -37,7 +39,6 @@ func NewServer(cfg *Config) (*Server, error) {
 	})
 	if err != nil {
 		log.Printf("⚠️  GLM provider init failed (continuing without GLM): %v", err)
-		// Continue without GLM — gateway will return 503 for GLM requests
 	}
 
 	// 2. Initialize MiMo DB
@@ -54,7 +55,6 @@ func NewServer(cfg *Config) (*Server, error) {
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware())
 
-	// Set trusted proxies (security: only trust loopback by default)
 	trustedProxies := os.Getenv("TRUSTED_PROXIES")
 	if trustedProxies == "" {
 		trustedProxies = "127.0.0.1/32,::1/128"
@@ -77,13 +77,10 @@ func NewServer(cfg *Config) (*Server, error) {
 func (s *Server) mountRoutes() {
 	r := s.router
 
-	// Health (no auth — for monitoring)
 	r.GET("/health", s.handleHealth)
 
-	// Auth middleware
 	apiAuth := auth.GatewayAuthMiddleware(s.cfg.GatewayToken)
 
-	// OpenAI-compatible endpoints
 	v1 := r.Group("/v1", apiAuth)
 	{
 		v1.GET("/models", s.handleModels)
@@ -91,7 +88,6 @@ func (s *Server) mountRoutes() {
 		v1.POST("/messages", s.handleAnthropicMessages)
 	}
 
-	// GLM-specific routes (under /glm/)
 	if s.glm != nil {
 		glmGroup := r.Group("/glm", apiAuth)
 		{
@@ -105,21 +101,20 @@ func (s *Server) mountRoutes() {
 		}
 	}
 
-	// MiMo-specific routes (under /mimo/) — forward to sub-engine
 	mimoGroup := r.Group("/mimo", apiAuth)
 	mimoGroup.Any("/*any", s.forwardToMiMo)
 
-	// MiMo agent routes (under /v1/agent/)
 	agentGroup := r.Group("/v1/agent", apiAuth)
 	agentGroup.Any("/*any", s.forwardToMiMoAgent)
 
-	// Root — simple info page
+	// Root — simple info page (no token displayed for security)
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, `<!DOCTYPE html>
 <html><head><title>zai2api Gateway</title>
 <style>body{font-family:monospace;background:#0d1117;color:#c9d1d9;padding:40px;max-width:800px;margin:0 auto}
-a{color:#58a6ff}h1{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:10px}</style>
+a{color:#58a6ff}h1{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:10px}
+code{background:#21262d;padding:2px 6px;border-radius:4px}</style>
 </head><body>
 <h1>zai2api — Unified AI Gateway</h1>
 <p>Single endpoint for GLM (Z.AI) and MiMo (Xiaomi) providers.</p>
@@ -135,16 +130,16 @@ a{color:#58a6ff}h1{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:
 </ul>
 <h3>Quick test</h3>
 <pre>curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer %s" \
+  -H "Authorization: Bearer &lt;YOUR_GATEWAY_TOKEN&gt;" \
   -H "Content-Type: application/json" \
   -d '{"model":"glm-5","messages":[{"role":"user","content":"Hello"}]}'</pre>
-</body></html>`, s.cfg.GatewayToken)
+</body></html>`)
 	})
 }
 
 // Run starts the HTTP server.
 func (s *Server) Run(addr string) error {
-	srv := &http.Server{
+	s.httpSrv = &http.Server{
 		Addr:              addr,
 		Handler:           s.router,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -152,12 +147,14 @@ func (s *Server) Run(addr string) error {
 		WriteTimeout:      600 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	return srv.ListenAndServe()
+	return s.httpSrv.ListenAndServe()
 }
 
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	// TODO: implement graceful shutdown with http.Server.Shutdown
+	if s.httpSrv != nil {
+		return s.httpSrv.Shutdown(ctx)
+	}
 	return nil
 }
 
@@ -186,20 +183,58 @@ func (s *Server) handleHealth(c *gin.Context) {
 	c.JSON(200, status)
 }
 
+// handleModels returns an aggregated list of GLM + MiMo models.
 func (s *Server) handleModels(c *gin.Context) {
-	// Forward to MiMo's handleModels (which returns aggregated list)
-	s.forwardToMiMo(c)
+	// Collect models from both providers in parallel
+	type modelItem struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		OwnedBy string `json:"owned_by"`
+	}
+
+	var models []modelItem
+
+	// GLM models (static fallback list — in Phase 3, fetch from provider)
+	if s.glm != nil {
+		glmModels := []string{"glm-5", "glm-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"}
+		for _, m := range glmModels {
+			models = append(models, modelItem{
+				ID: m, Object: "model", OwnedBy: "zai",
+			})
+		}
+	}
+
+	// MiMo models (forward to sub-engine and merge)
+	mimoResp, err := s.forwardToMiMoAndCapture(c, "/v1/models")
+	if err == nil && mimoResp != nil {
+		var mimoList struct {
+			Data []struct {
+				ID      string `json:"id"`
+				OwnedBy string `json:"owned_by"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(mimoResp, &mimoList) == nil {
+			for _, m := range mimoList.Data {
+				models = append(models, modelItem{
+					ID: m.ID, Object: "model", OwnedBy: m.OwnedBy,
+				})
+			}
+		}
+	}
+
+	c.JSON(200, gin.H{
+		"object": "list",
+		"data":   models,
+	})
 }
 
 func (s *Server) handleChatCompletions(c *gin.Context) {
-	// Read body to peek model
 	body, err := readBody(c)
 	if err != nil {
 		c.JSON(400, gin.H{"error": gin.H{"type": "invalid_request", "message": err.Error()}})
 		return
 	}
 
-	// Parse just the model field
 	model := peekModel(body)
 	if model == "" {
 		model = s.cfg.DefaultModel
@@ -208,7 +243,6 @@ func (s *Server) handleChatCompletions(c *gin.Context) {
 	provider := routeByModel(model)
 	log.Printf("[dispatch] model=%s → provider=%s", model, provider)
 
-	// Restore body for downstream handler
 	restoreBody(c, body)
 
 	switch provider {
@@ -235,16 +269,65 @@ func (s *Server) handleAnthropicMessages(c *gin.Context) {
 	c.Abort()
 }
 
+// forwardToMiMo strips the /mimo prefix before forwarding to the sub-engine.
 func (s *Server) forwardToMiMo(c *gin.Context) {
+	originalPath := c.Request.URL.Path
+	c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, "/mimo")
+	if c.Request.URL.Path == "" {
+		c.Request.URL.Path = "/"
+	}
+	s.mimoEngine.ServeHTTP(c.Writer, c.Request)
+	c.Request.URL.Path = originalPath // restore for logging
+	c.Abort()
+}
+
+// forwardToMiMoAgent forwards /v1/agent/* to the MiMo sub-engine.
+func (s *Server) forwardToMiMoAgent(c *gin.Context) {
 	s.mimoEngine.ServeHTTP(c.Writer, c.Request)
 	c.Abort()
 }
 
-func (s *Server) forwardToMiMoAgent(c *gin.Context) {
-	// Rewrite path: /v1/agent/run → /v1/agent/run
-	c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, "")
-	s.mimoEngine.ServeHTTP(c.Writer, c.Request)
-	c.Abort()
+// forwardToMiMoAndCapture forwards a request to the MiMo sub-engine and
+// captures the response body (used for model aggregation).
+func (s *Server) forwardToMiMoAndCapture(c *gin.Context, path string) ([]byte, error) {
+	// Create a new request to the MiMo sub-engine
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Copy auth header
+	if auth := c.GetHeader("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	// Use a response recorder
+	w := &responseRecorder{header: http.Header{}, body: &strings.Builder{}}
+	s.mimoEngine.ServeHTTP(w, req)
+
+	if w.status != 200 {
+		return nil, fmt.Errorf("mimo returned %d", w.status)
+	}
+	return []byte(w.body.String()), nil
+}
+
+// responseRecorder captures HTTP responses for internal forwarding.
+type responseRecorder struct {
+	header http.Header
+	body   *strings.Builder
+	status int
+}
+
+func (r *responseRecorder) Header() http.Header {
+	if r.header == nil {
+		r.header = http.Header{}
+	}
+	return r.header
+}
+func (r *responseRecorder) Write(data []byte) (int, error) {
+	return r.body.Write(data)
+}
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.status = statusCode
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -261,63 +344,45 @@ func routeByModel(model string) string {
 	}
 }
 
+// readBody reads the entire request body using io.ReadAll.
 func readBody(c *gin.Context) ([]byte, error) {
-	body := make([]byte, c.Request.ContentLength)
-	if c.Request.ContentLength > 0 {
-		_, err := c.Request.Body.Read(body)
-		if err != nil && err.Error() != "EOF" {
-			return nil, err
-		}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return nil, err
 	}
-	c.Request.Body = nil
+	c.Request.Body.Close()
 	return body, nil
 }
 
+// restoreBody replaces the request body with the given bytes.
 func restoreBody(c *gin.Context, body []byte) {
-	c.Request.Body = noopCloser{bytes: body}
+	c.Request.Body = &bodyReader{data: body}
 	c.Request.ContentLength = int64(len(body))
 }
 
+// peekModel extracts the "model" field from a JSON body using proper parsing.
 func peekModel(body []byte) string {
-	// Simple JSON peek without full parse
-	s := string(body)
-	idx := strings.Index(s, `"model"`)
-	if idx < 0 {
-		return ""
+	var peek struct {
+		Model string `json:"model"`
 	}
-	rest := s[idx+len(`"model"`):]
-	colon := strings.Index(rest, ":")
-	if colon < 0 {
-		return ""
-	}
-	rest = rest[colon+1:]
-	quote := strings.Index(rest, `"`)
-	if quote < 0 {
-		return ""
-	}
-	rest = rest[quote+1:]
-	end := strings.Index(rest, `"`)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
+	_ = json.Unmarshal(body, &peek)
+	return peek.Model
 }
 
-// noopCloser implements io.ReadCloser over a byte slice.
-type noopCloser struct {
-	bytes []byte
-	pos   int
+// bodyReader implements io.ReadCloser over a byte slice with proper
+// position tracking and io.EOF signaling.
+type bodyReader struct {
+	data []byte
+	pos  int
 }
 
-func (n noopCloser) Read(p []byte) (int, error) {
-	if n.pos >= len(n.bytes) {
-		return 0, fmt.Errorf("EOF")
+func (b *bodyReader) Read(p []byte) (int, error) {
+	if b.pos >= len(b.data) {
+		return 0, io.EOF
 	}
-	copied := copy(p, n.bytes[n.pos:])
+	copied := copy(p, b.data[b.pos:])
+	b.pos += copied
 	return copied, nil
 }
 
-func (n noopCloser) Close() error { return nil }
-
-// unused import suppression
-var _ = proxy.ResolveClient
+func (b *bodyReader) Close() error { return nil }

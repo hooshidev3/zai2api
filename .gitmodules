@@ -1,0 +1,8 @@
+[submodule "glm"]
+	path = glm
+	url = https://github.com/hooshidev3/GLM-Free-API.git
+	branch = merged-patches
+[submodule "mimo"]
+	path = mimo
+	url = https://github.com/hooshidev3/mimo-ai-proxy.git
+	branch = merged-patches

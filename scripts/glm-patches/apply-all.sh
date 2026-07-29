@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/../../" && pwd)"
-GLM_DIR="$DIR/glm"
+GLM_DIR="${GLM_DIR:-$DIR/glm}"
 PATCHES_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$GLM_DIR"
@@ -40,10 +40,10 @@ module glm-free-api/cmd/token-collector
 go 1.25.0
 
 require (
-	github.com/charmbracelet/bubbletea v1.3.4
-	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/mxschmitt/playwright-go v0.0.0-20240819155338-3c5eb7b16b0b
-	modernc.org/sqlite v1.34.5
+        github.com/charmbracelet/bubbletea v1.3.4
+        github.com/charmbracelet/lipgloss v1.1.0
+        github.com/mxschmitt/playwright-go v0.0.0-20240819155338-3c5eb7b16b0b
+        modernc.org/sqlite v1.34.5
 )
 EOF
 
