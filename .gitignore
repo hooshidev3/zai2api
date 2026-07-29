@@ -1,0 +1,31 @@
+# Dependencies
+glm/
+mimo/
+bin/
+data/
+*.sqlite
+*.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+*.test
+*.out
+
+# Spike (already self-contained, but ignore its build artifacts)
+spike/gateway/gateway
+spike/subengine/subengine
+
+# Environment
+.env
+.env.local

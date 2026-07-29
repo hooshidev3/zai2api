@@ -1,0 +1,108 @@
+// Package glm — Provider struct encapsulates state that was previously
+// global in the original main.go (session, config, db, http clients).
+// This enables gateway to create multiple Provider instances for
+// multi-account support.
+//
+// Note: In Phase 3, zaiHTTPClient and aliyunHTTPClient globals will be
+// moved into Provider fields for true per-account isolation. For now,
+// Provider uses the existing globals which works for single-account.
+package glm
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"sync/atomic"
+
+	_ "modernc.org/sqlite"
+)
+
+// Options configures a Provider at construction time.
+type Options struct {
+	CaptchaDBPath string // path to tokens.sqlite (required)
+	Verbose       bool
+	AgentMode     bool
+}
+
+// Provider holds all state for a Z.AI bridge instance.
+type Provider struct {
+	cfg       *Config
+	db        *sql.DB
+	agentMode bool
+	verbose   bool
+
+	gRunning atomic.Bool
+
+	// In Phase 3, these will be per-account:
+	// zaiClient    *http.Client
+	// aliyunClient *http.Client
+	// For now, we use the package-level globals (zaiHTTPClient, aliyunHTTPClient).
+}
+
+// NewProvider creates a new Provider with the given options.
+// It opens the captcha database and initializes the captcha cache.
+func NewProvider(opts Options) (*Provider, error) {
+	if opts.CaptchaDBPath == "" {
+		return nil, fmt.Errorf("CaptchaDBPath is required")
+	}
+
+	if _, err := os.Stat(opts.CaptchaDBPath); err != nil {
+		return nil, fmt.Errorf("captcha db not found at %s: %w (run cmd/token-collector first)", opts.CaptchaDBPath, err)
+	}
+
+	db, err := sql.Open("sqlite", opts.CaptchaDBPath)
+	if err != nil {
+		return nil, fmt.Errorf("open captcha db: %w", err)
+	}
+
+	p := &Provider{
+		cfg:       loadConfig(),
+		db:        db,
+		agentMode: opts.AgentMode,
+		verbose:   opts.Verbose,
+	}
+
+	p.gRunning.Store(true)
+
+	if opts.AgentMode {
+		go captchaCache.Run()
+		log.Println("[glm] Agent mode: captcha background cache started")
+	}
+
+	return p, nil
+}
+
+// Close releases resources held by the Provider.
+func (p *Provider) Close() error {
+	p.gRunning.Store(false)
+	if p.db != nil {
+		return p.db.Close()
+	}
+	return nil
+}
+
+// Config returns the provider's configuration (read-only for gateway).
+func (p *Provider) Config() *Config {
+	return p.cfg
+}
+
+// DB returns the captcha database (for advanced use).
+func (p *Provider) DB() *sql.DB {
+	return p.db
+}
+
+// globalDB and dbMu are referenced by the original code; we need to
+// assign our db to globalDB so existing functions work.
+// This is a temporary bridge until full refactor in Phase 3.
+func init() {
+	// globalDB will be set by NewProvider via SetGlobalDB
+}
+
+// SetGlobalDB assigns the provider's DB to the package-level globalDB
+// so existing code that references globalDB continues to work.
+// This is a temporary measure until full per-instance refactor.
+func (p *Provider) SetGlobalDB() {
+	globalDB = p.db
+}

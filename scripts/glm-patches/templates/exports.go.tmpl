@@ -1,0 +1,78 @@
+// Package glm — exports.go provides public handler wrappers that gateway
+// can mount on its router. These wrap the internal (unexported) handlers
+// from the original main.go.
+package glm
+
+import (
+	"net/http"
+)
+
+// ChatCompletionsHandler is the OpenAI-compatible chat completions endpoint.
+// Gateway mounts this at POST /v1/chat/completions for GLM-routed models.
+func (p *Provider) ChatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
+	// Ensure globalDB points to our db (temporary bridge)
+	p.SetGlobalDB()
+	// Delegate to the package-level handler (from original main.go)
+	chatCompletionsHandler(w, r)
+}
+
+// AnthropicMessagesHandler is the Anthropic-compatible messages endpoint.
+// Gateway mounts this at POST /v1/messages.
+func (p *Provider) AnthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
+	p.SetGlobalDB()
+	anthropicMessagesHandler(w, r)
+}
+
+// ModelsHandler returns the list of available Z.AI models.
+// Gateway mounts this at GET /v1/models (GLM subset).
+func (p *Provider) ModelsHandler(w http.ResponseWriter, r *http.Request) {
+	p.SetGlobalDB()
+	modelsHandler(w, r)
+}
+
+// ModelsHandler2 returns models in the alternate format (for /models route).
+func (p *Provider) ModelsHandler2(w http.ResponseWriter, r *http.Request) {
+	p.SetGlobalDB()
+	modelsHandler2(w, r)
+}
+
+// DashboardHandler returns the GLM dashboard (redirects to /health in original).
+func (p *Provider) DashboardHandler(w http.ResponseWriter, r *http.Request) {
+	dashboardHandler(w, r)
+}
+
+// StatsHandler returns GLM stats.
+func (p *Provider) StatsHandler(w http.ResponseWriter, r *http.Request) {
+	p.SetGlobalDB()
+	statsHandler(w, r)
+}
+
+// HealthHandler returns GLM health status.
+func (p *Provider) HealthHandler(w http.ResponseWriter, r *http.Request) {
+	healthHandler(w, r)
+}
+
+// StatusHandler returns GLM session status.
+func (p *Provider) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	statusHandler(w, r)
+}
+
+// FeaturesHandler handles GET/POST per-model feature configuration.
+func (p *Provider) FeaturesHandler(w http.ResponseWriter, r *http.Request) {
+	featuresHandler(w, r)
+}
+
+// InjectHandler returns the inject.js script.
+func (p *Provider) InjectHandler(w http.ResponseWriter, r *http.Request) {
+	injectHandler(w, r)
+}
+
+// StopHandler handles session stop requests.
+func (p *Provider) StopHandler(w http.ResponseWriter, r *http.Request) {
+	stopHandler(w, r)
+}
+
+// ClientsHandler returns connected clients.
+func (p *Provider) ClientsHandler(w http.ResponseWriter, r *http.Request) {
+	clientsHandler(w, r)
+}

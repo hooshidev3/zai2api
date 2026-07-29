@@ -1,0 +1,46 @@
+package authctx
+
+import (
+	"context"
+	"net/http"
+	"testing"
+)
+
+func TestKeyIdentity(t *testing.T) {
+	auth := InjectedAuth{AccountID: "mimo-1", Token: "abc"}
+	client := &http.Client{}
+	ctx := context.Background()
+	ctx = WithAuth(ctx, auth)
+	ctx = WithClient(ctx, client)
+	got, gotClient, ok := FromContext(ctx)
+	if !ok {
+		t.Fatal("FromContext returned ok=false")
+	}
+	if got.AccountID != auth.AccountID {
+		t.Errorf("AccountID mismatch: got %q, want %q", got.AccountID, auth.AccountID)
+	}
+	if gotClient != client {
+		t.Error("Client mismatch")
+	}
+}
+
+func TestFallbackWhenNotSet(t *testing.T) {
+	_, _, ok := FromContext(context.Background())
+	if ok {
+		t.Fatal("Expected ok=false when context not set")
+	}
+}
+
+// TestDirectContextWithValueDoesNotWork is a safeguard against the silent
+// key-identity bug. If a developer in the future tries to use
+// context.WithValue directly with a foreign key type, FromContext will
+// NOT pick it up.
+func TestDirectContextWithValueDoesNotWork(t *testing.T) {
+	type foreignContextKey string
+	const foreignKey foreignContextKey = "auth"
+	ctx := context.WithValue(context.Background(), foreignKey, "should-not-work")
+	_, _, ok := FromContext(ctx)
+	if ok {
+		t.Fatal("FromContext should return ok=false for foreign context keys")
+	}
+}

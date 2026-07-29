@@ -1,0 +1,64 @@
+// Package authctx provides a shared, dependency-free way to inject
+// authentication and HTTP client through request context.
+//
+// ⚠️ Code Review Rule:
+// Never use context.WithValue directly for auth. Always use WithAuth/FromContext
+// to guarantee key identity. Direct use of context.WithValue causes a silent
+// runtime bug that may go undetected for weeks.
+//
+// This package is a leaf package — it has no dependencies on gateway or
+// mimoproxy. Both gateway and mimoproxy/pkg/services import it to share
+// the same context key identity without creating an import cycle.
+package authctx
+
+import (
+	"context"
+	"net/http"
+)
+
+// contextKey is defined ONLY in this package.
+type contextKey int
+
+const (
+	authKey  contextKey = iota
+	clientKey
+)
+
+// InjectedAuth contains only the fields MiMo needs — no reference to
+// the real Account type in gateway.
+type InjectedAuth struct {
+	Cookie    string
+	Ph        string
+	Token     string
+	AccountID string
+	Provider  string
+	ProxyInfo string
+}
+
+// WithAuth places auth into the context.
+func WithAuth(ctx context.Context, a InjectedAuth) context.Context {
+	return context.WithValue(ctx, authKey, a)
+}
+
+// WithClient places a per-account HTTP client into the context.
+func WithClient(ctx context.Context, c *http.Client) context.Context {
+	return context.WithValue(ctx, clientKey, c)
+}
+
+// FromContext reads auth and client from the context.
+func FromContext(ctx context.Context) (InjectedAuth, *http.Client, bool) {
+	a, ok := ctx.Value(authKey).(InjectedAuth)
+	if !ok {
+		return InjectedAuth{}, nil, false
+	}
+	c, _ := ctx.Value(clientKey).(*http.Client)
+	return a, c, true
+}
+
+// AccountIDFromContext returns only AccountID (for logging).
+func AccountIDFromContext(ctx context.Context) string {
+	if a, ok := ctx.Value(authKey).(InjectedAuth); ok {
+		return a.AccountID
+	}
+	return ""
+}
