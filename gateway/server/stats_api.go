@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -84,7 +85,9 @@ func (s *Server) handleDetailedStats(c *gin.Context) {
 // Sanitizes rangeStr in the filename to prevent header injection.
 func (s *Server) handleExportStatsCSV(c *gin.Context) {
 	if s.db == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not initialized"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": gin.H{"type": "db_unavailable", "message": "database not initialized"},
+		})
 		return
 	}
 
@@ -115,7 +118,9 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"type": "db_error", "message": err.Error()},
+		})
 		return
 	}
 	defer rows.Close()
@@ -139,6 +144,7 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 		var tokPrompt, tokComp, tokTotal, duration, statusCode int
 		if err := rows.Scan(&ts, &prov, &model, &accountID,
 			&tokPrompt, &tokComp, &tokTotal, &duration, &statusCode, &errMsg); err != nil {
+			log.Printf("[stats] skip row in CSV export: %v", err)
 			continue // skip corrupt rows
 		}
 		writer.Write([]string{
@@ -146,6 +152,11 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 			strconv.Itoa(tokPrompt), strconv.Itoa(tokComp), strconv.Itoa(tokTotal),
 			strconv.Itoa(duration), strconv.Itoa(statusCode), errMsg.String,
 		})
+	}
+
+	// Check iteration error after the loop completes
+	if err := rows.Err(); err != nil {
+		log.Printf("[stats] CSV export iteration error: %v", err)
 	}
 }
 

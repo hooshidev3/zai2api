@@ -139,8 +139,10 @@ jobs:
         run: |
           if [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ] && [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub credentials: available"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub credentials: NOT set — will push to GHCR only"
           fi
 
       - name: Login to GHCR
