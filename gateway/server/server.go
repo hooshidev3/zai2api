@@ -416,6 +416,10 @@ func (s *Server) forwardToMiMoAgent(c *gin.Context) {
 
 // forwardToMiMoAndCapture forwards a request to the MiMo sub-engine and
 // captures the response body (used for model aggregation).
+//
+// ⚠️ This buffers the entire response — only use for non-streaming
+// endpoints (e.g., GET /v1/models). For streaming endpoints (like
+// chat/completions with stream=true), use forwardToMiMo instead.
 func (s *Server) forwardToMiMoAndCapture(c *gin.Context, path string) ([]byte, error) {
         // Create a new request to the MiMo sub-engine
         req, err := http.NewRequestWithContext(c.Request.Context(), "GET", path, nil)
