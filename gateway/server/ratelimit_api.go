@@ -24,13 +24,16 @@ func (s *Server) handleListRateLimits(c *gin.Context) {
 	var limits []RateLimit
 	for rows.Next() {
 		var l RateLimit
-		rows.Scan(&l.Model, &l.MaxRPM, &l.MaxTPM, &l.MaxContext)
+		if err := rows.Scan(&l.Model, &l.MaxRPM, &l.MaxTPM, &l.MaxContext); err != nil {
+			continue // skip corrupt rows
+		}
 		limits = append(limits, l)
 	}
 	c.JSON(http.StatusOK, gin.H{"rate_limits": limits})
 }
 
 // handleSetRateLimit creates or updates a rate limit for a model.
+// Validates that model is non-empty and values are >= 0.
 func (s *Server) handleSetRateLimit(c *gin.Context) {
 	if s.db == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not initialized"})
@@ -38,6 +41,11 @@ func (s *Server) handleSetRateLimit(c *gin.Context) {
 	}
 
 	model := c.Param("id")
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model id is required"})
+		return
+	}
+
 	var req struct {
 		MaxRPM     int `json:"max_rpm"`
 		MaxTPM     int `json:"max_tpm"`
@@ -45,6 +53,12 @@ func (s *Server) handleSetRateLimit(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate: negative values are not allowed (0 = unlimited)
+	if req.MaxRPM < 0 || req.MaxTPM < 0 || req.MaxContext < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rate limit values must be >= 0 (0 = unlimited)"})
 		return
 	}
 
@@ -76,7 +90,8 @@ func (s *Server) handleSetRateLimit(c *gin.Context) {
 	})
 }
 
-// handleDeleteRateLimit removes a rate limit.
+// handleDeleteRateLimit removes a rate limit from DB and memory.
+// Returns error if DB delete fails (prevents desync).
 func (s *Server) handleDeleteRateLimit(c *gin.Context) {
 	if s.db == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not initialized"})
@@ -84,7 +99,10 @@ func (s *Server) handleDeleteRateLimit(c *gin.Context) {
 	}
 
 	model := c.Param("id")
-	s.db.Exec("DELETE FROM model_rate_limits WHERE model = ?", model)
+	if _, err := s.db.Exec("DELETE FROM model_rate_limits WHERE model = ?", model); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if s.rateLimiter != nil {
 		s.rateLimiter.RemoveLimit(model)
 	}

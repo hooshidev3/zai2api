@@ -2,6 +2,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"net/http"
@@ -22,6 +23,7 @@ type ModelStats struct {
 }
 
 // handleDetailedStats returns per-model stats from request_log.
+// Uses COALESCE to handle NULL model/provider columns.
 func (s *Server) handleDetailedStats(c *gin.Context) {
 	if s.db == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "db_unavailable", "message": "database not initialized"}})
@@ -30,11 +32,12 @@ func (s *Server) handleDetailedStats(c *gin.Context) {
 
 	provider := c.Query("provider")
 	rangeStr := c.DefaultQuery("range", "24h")
-
 	since := parseTimeRange(rangeStr)
 
+	// COALESCE ensures NULL model/provider are shown as 'unknown' instead of being skipped
 	query := `
-		SELECT model, provider,
+		SELECT COALESCE(model, 'unknown') as model,
+		       COALESCE(provider, 'unknown') as provider,
 		       COUNT(*) as requests,
 		       COALESCE(SUM(tokens_total), 0) as tokens,
 		       COALESCE(CAST(AVG(duration_ms) AS INTEGER), 0) as avg_latency,
@@ -77,6 +80,8 @@ func (s *Server) handleDetailedStats(c *gin.Context) {
 }
 
 // handleExportStatsCSV exports request_log as CSV.
+// Uses sql.NullString for nullable columns (account_id, error_message).
+// Sanitizes rangeStr in the filename to prevent header injection.
 func (s *Server) handleExportStatsCSV(c *gin.Context) {
 	if s.db == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "database not initialized"})
@@ -86,6 +91,13 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 	provider := c.Query("provider")
 	rangeStr := c.DefaultQuery("range", "24h")
 	since := parseTimeRange(rangeStr)
+
+	// Sanitize rangeStr for filename (only allow known values)
+	safeRange := "24h"
+	switch rangeStr {
+	case "1h", "7d", "24h":
+		safeRange = rangeStr
+	}
 
 	query := `
 		SELECT timestamp, provider, model, account_id,
@@ -110,7 +122,7 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 
 	c.Header("Content-Type", "text/csv")
 	c.Header("Content-Disposition",
-		fmt.Sprintf("attachment; filename=stats_%s_%s.csv", rangeStr, time.Now().Format("20060102_150405")))
+		fmt.Sprintf("attachment; filename=stats_%s_%s.csv", safeRange, time.Now().Format("20060102_150405")))
 
 	writer := csv.NewWriter(c.Writer)
 	defer writer.Flush()
@@ -122,14 +134,17 @@ func (s *Server) handleExportStatsCSV(c *gin.Context) {
 	})
 
 	for rows.Next() {
-		var ts, prov, model, accountID, errMsg string
+		var ts, prov, model string
+		var accountID, errMsg sql.NullString // nullable columns
 		var tokPrompt, tokComp, tokTotal, duration, statusCode int
-		rows.Scan(&ts, &prov, &model, &accountID,
-			&tokPrompt, &tokComp, &tokTotal, &duration, &statusCode, &errMsg)
+		if err := rows.Scan(&ts, &prov, &model, &accountID,
+			&tokPrompt, &tokComp, &tokTotal, &duration, &statusCode, &errMsg); err != nil {
+			continue // skip corrupt rows
+		}
 		writer.Write([]string{
-			ts, prov, model, accountID,
+			ts, prov, model, accountID.String,
 			strconv.Itoa(tokPrompt), strconv.Itoa(tokComp), strconv.Itoa(tokTotal),
-			strconv.Itoa(duration), strconv.Itoa(statusCode), errMsg,
+			strconv.Itoa(duration), strconv.Itoa(statusCode), errMsg.String,
 		})
 	}
 }

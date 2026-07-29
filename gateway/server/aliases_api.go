@@ -1,4 +1,5 @@
 // Package server — Model Aliases API (CRUD + resolution).
+// All map access is protected by s.aliasesMu (RWMutex) to prevent data races.
 package server
 
 import (
@@ -32,7 +33,9 @@ func (s *Server) handleListAliases(c *gin.Context) {
 	var aliases []Alias
 	for rows.Next() {
 		var a Alias
-		rows.Scan(&a.Alias, &a.TargetModel, &a.CreatedAt)
+		if err := rows.Scan(&a.Alias, &a.TargetModel, &a.CreatedAt); err != nil {
+			continue
+		}
 		aliases = append(aliases, a)
 	}
 	c.JSON(http.StatusOK, gin.H{"aliases": aliases})
@@ -63,8 +66,10 @@ func (s *Server) handleAddAlias(c *gin.Context) {
 		return
 	}
 
-	// Update in-memory cache
+	// Update in-memory cache (thread-safe)
+	s.aliasesMu.Lock()
 	s.aliases[req.Alias] = req.TargetModel
+	s.aliasesMu.Unlock()
 
 	c.JSON(http.StatusCreated, gin.H{"alias": req.Alias, "target_model": req.TargetModel})
 }
@@ -77,17 +82,24 @@ func (s *Server) handleDeleteAlias(c *gin.Context) {
 	}
 
 	alias := c.Param("name")
-	_, err := s.db.Exec("DELETE FROM model_aliases WHERE alias = ?", alias)
-	if err != nil {
+	if _, err := s.db.Exec("DELETE FROM model_aliases WHERE alias = ?", alias); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Remove from in-memory cache (thread-safe)
+	s.aliasesMu.Lock()
 	delete(s.aliases, alias)
+	s.aliasesMu.Unlock()
+
 	c.JSON(http.StatusOK, gin.H{"deleted": alias})
 }
 
 // resolveAlias returns the target model for an alias, or the input if no alias exists.
+// Thread-safe via aliasesMu.RLock.
 func (s *Server) resolveAlias(name string) string {
+	s.aliasesMu.RLock()
+	defer s.aliasesMu.RUnlock()
 	if s.aliases == nil {
 		return name
 	}
@@ -98,6 +110,7 @@ func (s *Server) resolveAlias(name string) string {
 }
 
 // loadAliasesFromDB loads all aliases into memory at startup.
+// Called once during NewServer before any concurrent access.
 func (s *Server) loadAliasesFromDB() {
 	if s.db == nil {
 		return
@@ -107,9 +120,14 @@ func (s *Server) loadAliasesFromDB() {
 		return
 	}
 	defer rows.Close()
+
+	s.aliasesMu.Lock()
+	defer s.aliasesMu.Unlock()
 	for rows.Next() {
 		var alias, target string
-		rows.Scan(&alias, &target)
+		if err := rows.Scan(&alias, &target); err != nil {
+			continue
+		}
 		s.aliases[alias] = target
 	}
 }

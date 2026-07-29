@@ -11,6 +11,10 @@ import (
 // handleListAgents lists active MiMo agents by proxying to the sub-engine.
 // If MiMo doesn't have agent endpoints, returns an empty list.
 func (s *Server) handleListAgents(c *gin.Context) {
+	if s.mimoEngine == nil {
+		c.JSON(http.StatusOK, gin.H{"agents": []any{}})
+		return
+	}
 	resp, err := s.forwardToMiMoAndCapture(c, "/v1/agent/status")
 	if err != nil || len(resp) == 0 {
 		c.JSON(http.StatusOK, gin.H{"agents": []any{}})
@@ -27,6 +31,10 @@ func (s *Server) handleListAgents(c *gin.Context) {
 
 // handleAgentStatus returns the status of a single agent.
 func (s *Server) handleAgentStatus(c *gin.Context) {
+	if s.mimoEngine == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MiMo engine not available"})
+		return
+	}
 	id := c.Param("id")
 	resp, err := s.forwardToMiMoAndCapture(c, "/v1/agent/status/"+id)
 	if err != nil {
@@ -38,6 +46,10 @@ func (s *Server) handleAgentStatus(c *gin.Context) {
 
 // handleRunAgent starts a new MiMo agent by forwarding to the sub-engine.
 func (s *Server) handleRunAgent(c *gin.Context) {
+	if s.mimoEngine == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MiMo engine not available"})
+		return
+	}
 	c.Request.URL.Path = "/v1/agent/run"
 	s.mimoEngine.ServeHTTP(c.Writer, c.Request)
 	c.Abort()
@@ -45,6 +57,10 @@ func (s *Server) handleRunAgent(c *gin.Context) {
 
 // handleAgentStream proxies SSE stream for an agent.
 func (s *Server) handleAgentStream(c *gin.Context) {
+	if s.mimoEngine == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MiMo engine not available"})
+		return
+	}
 	id := c.Param("id")
 	c.Request.URL.Path = "/v1/agent/stream/" + id
 	s.mimoEngine.ServeHTTP(c.Writer, c.Request)

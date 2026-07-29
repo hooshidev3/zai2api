@@ -12,6 +12,7 @@ import (
         "net/http"
         "os"
         "strings"
+        "sync"
         "time"
 
         "zai2api/gateway/auth"
@@ -25,16 +26,17 @@ import (
 
 // Server is the unified gateway.
 type Server struct {
-        cfg        *Config
-        glm        *glmapi.Provider
-        router     *gin.Engine
-        mimoEngine *gin.Engine
-        httpSrv    *http.Server
-        accounts   *AccountManager
-        db         *sql.DB
-        stats      *StatsCollector
-        startTime  time.Time
-        aliases    map[string]string
+        cfg         *Config
+        glm         *glmapi.Provider
+        router      *gin.Engine
+        mimoEngine  *gin.Engine
+        httpSrv     *http.Server
+        accounts    *AccountManager
+        db          *sql.DB
+        stats       *StatsCollector
+        startTime   time.Time
+        aliases     map[string]string
+        aliasesMu   sync.RWMutex
         rateLimiter *RateLimiter
 }
 
@@ -333,7 +335,6 @@ func (s *Server) handleChatCompletions(c *gin.Context) {
         provider := routeByModel(model)
         c.Set("provider", provider)
         c.Set("model", model)
-        c.Set("server", s) // for rate limiter middleware to access resolveAlias
 
         log.Printf("[dispatch] model=%s → provider=%s", model, provider)
 
