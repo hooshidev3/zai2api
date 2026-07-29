@@ -77,6 +77,13 @@ document.querySelectorAll('.nav-item').forEach(item => {
         // Lazy-load tab content
         if (tab === 'accounts' && typeof loadAccounts === 'function') loadAccounts();
         if (tab === 'models' && typeof loadModels === 'function') loadModels();
+        if (tab === 'providers' && typeof loadProviders === 'function') loadProviders();
+        if (tab === 'agents' && typeof loadAgents === 'function') loadAgents();
+        if (tab === 'stats' && typeof loadDetailedStats === 'function') loadDetailedStats();
+        if (tab === 'settings') {
+            if (typeof loadAliases === 'function') loadAliases();
+            if (typeof loadRateLimits === 'function') loadRateLimits();
+        }
     });
 });
 

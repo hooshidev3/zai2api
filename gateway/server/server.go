@@ -34,6 +34,8 @@ type Server struct {
         db         *sql.DB
         stats      *StatsCollector
         startTime  time.Time
+        aliases    map[string]string
+        rateLimiter *RateLimiter
 }
 
 // NewServer creates and configures the gateway.
@@ -87,14 +89,22 @@ func NewServer(cfg *Config) (*Server, error) {
         r.Static("/static", "./static")
 
         s := &Server{
-                cfg:        cfg,
-                glm:        glmProv,
-                router:     r,
-                mimoEngine: mimoSub,
-                accounts:   am,
-                db:         gwDB,
-                stats:      NewStatsCollector(),
-                startTime:  time.Now(),
+                cfg:         cfg,
+                glm:         glmProv,
+                router:      r,
+                mimoEngine:  mimoSub,
+                accounts:    am,
+                db:          gwDB,
+                stats:       NewStatsCollector(),
+                startTime:   time.Now(),
+                aliases:     make(map[string]string),
+                rateLimiter: NewRateLimiter(),
+        }
+
+        // Load aliases and rate limits from DB
+        if gwDB != nil {
+                s.loadAliasesFromDB()
+                s.rateLimiter.LoadLimitsFromDB(gwDB)
         }
 
         // Start retention job for request_log
@@ -168,6 +178,21 @@ func (s *Server) mountRoutes() {
                         apiGroup.POST("/accounts/:id/test", s.handleTestAccount)
                         apiGroup.GET("/models", s.handleAggregatedModels)
                         apiGroup.PUT("/models/:id/features", s.handleUpdateModelFeatures)
+
+                        // Phase 5: Providers, Stats, Aliases, Rate Limits, Agents
+                        apiGroup.GET("/providers/status", s.handleProviderStatus)
+                        apiGroup.GET("/stats/detailed", s.handleDetailedStats)
+                        apiGroup.GET("/stats/export", s.handleExportStatsCSV)
+                        apiGroup.GET("/models/aliases", s.handleListAliases)
+                        apiGroup.POST("/models/aliases", s.handleAddAlias)
+                        apiGroup.DELETE("/models/aliases/:name", s.handleDeleteAlias)
+                        apiGroup.GET("/models/rate-limits", s.handleListRateLimits)
+                        apiGroup.PUT("/models/:id/rate-limit", s.handleSetRateLimit)
+                        apiGroup.DELETE("/models/:id/rate-limit", s.handleDeleteRateLimit)
+                        apiGroup.GET("/agents", s.handleListAgents)
+                        apiGroup.GET("/agents/:id", s.handleAgentStatus)
+                        apiGroup.POST("/agents/run", s.handleRunAgent)
+                        apiGroup.GET("/agents/:id/stream", s.handleAgentStream)
                 }
         }
 }
@@ -287,9 +312,28 @@ func (s *Server) handleChatCompletions(c *gin.Context) {
                 model = s.cfg.DefaultModel
         }
 
+        // Resolve alias (e.g., "fast" → "glm-4.5-air")
+        resolvedModel := s.resolveAlias(model)
+        if resolvedModel != model {
+                log.Printf("[dispatch] alias: %s → %s", model, resolvedModel)
+                model = resolvedModel
+        }
+
+        // Check rate limit
+        if s.rateLimiter != nil && !s.rateLimiter.Allow(model, 0) {
+                c.JSON(http.StatusTooManyRequests, gin.H{
+                        "error": gin.H{
+                                "type":    "rate_limit_exceeded",
+                                "message": fmt.Sprintf("Rate limit for model %s exceeded", model),
+                        },
+                })
+                return
+        }
+
         provider := routeByModel(model)
         c.Set("provider", provider)
         c.Set("model", model)
+        c.Set("server", s) // for rate limiter middleware to access resolveAlias
 
         log.Printf("[dispatch] model=%s → provider=%s", model, provider)
 

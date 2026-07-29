@@ -32,6 +32,18 @@
             <a class="nav-item" data-tab="models">
                 <span class="icon">🤖</span> Models
             </a>
+            <a class="nav-item" data-tab="providers">
+                <span class="icon">🔌</span> Providers
+            </a>
+            <a class="nav-item" data-tab="agents">
+                <span class="icon">⚡</span> Agents
+            </a>
+            <a class="nav-item" data-tab="stats">
+                <span class="icon">📈</span> Stats
+            </a>
+            <a class="nav-item" data-tab="settings">
+                <span class="icon">⚙</span> Settings
+            </a>
         </nav>
 
         <!-- Main content -->
@@ -168,6 +180,112 @@
                     </table>
                 </div>
             </section>
+
+            <!-- ═══ Providers Tab ═══ -->
+            <section id="providers" class="tab-content">
+                <div class="card">
+                    <h3>Provider Status</h3>
+                    <div id="providers-container" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                        <p style="color:var(--text-muted)">Loading providers...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ Agents Tab ═══ -->
+            <section id="agents" class="tab-content">
+                <div class="card">
+                    <h3>Active Agents (MiMo)</h3>
+                    <table class="table" id="agents-table">
+                        <thead>
+                            <tr>
+                                <th>Goal ID</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Loading agents...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ═══ Stats Tab ═══ -->
+            <section id="stats" class="tab-content">
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                        <h3 style="margin:0">Detailed Statistics</h3>
+                        <div style="display:flex;gap:8px">
+                            <select id="stats-provider-filter" class="form-control" style="width:auto">
+                                <option value="">All Providers</option>
+                                <option value="glm">GLM</option>
+                                <option value="mimo">MiMo</option>
+                            </select>
+                            <select id="stats-time-range" class="form-control" style="width:auto">
+                                <option value="1h">Last 1 Hour</option>
+                                <option value="24h" selected>Last 24 Hours</option>
+                                <option value="7d">Last 7 Days</option>
+                            </select>
+                            <button class="btn" onclick="exportStatsCSV()">Export CSV</button>
+                        </div>
+                    </div>
+                    <table class="table" id="stats-model-table">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>Provider</th>
+                                <th>Requests</th>
+                                <th>Tokens</th>
+                                <th>Avg Latency</th>
+                                <th>Error Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Loading stats...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ═══ Settings Tab ═══ -->
+            <section id="settings" class="tab-content">
+                <div class="card">
+                    <h3>Model Aliases</h3>
+                    <table class="table" id="aliases-table">
+                        <thead>
+                            <tr>
+                                <th>Alias</th>
+                                <th>Target Model</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="4" style="text-align:center;color:var(--text-muted)">Loading aliases...</td></tr>
+                        </tbody>
+                    </table>
+                    <button class="btn btn-primary btn-sm" onclick="openAddAliasModal()" style="margin-top:12px">+ Add Alias</button>
+                </div>
+                <div class="card">
+                    <h3>Rate Limits</h3>
+                    <table class="table" id="ratelimits-table">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>Max RPM</th>
+                                <th>Max TPM</th>
+                                <th>Max Context</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Loading rate limits...</td></tr>
+                        </tbody>
+                    </table>
+                    <button class="btn btn-primary btn-sm" onclick="openAddRateLimitModal()" style="margin-top:12px">+ Add Rate Limit</button>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -270,5 +388,10 @@
     <script src="/static/js/app.js"></script>
     <script src="/static/js/accounts.js"></script>
     <script src="/static/js/models.js"></script>
+    <script src="/static/js/providers.js"></script>
+    <script src="/static/js/stats.js"></script>
+    <script src="/static/js/aliases.js"></script>
+    <script src="/static/js/ratelimit.js"></script>
+    <script src="/static/js/agents.js"></script>
 </body>
 </html>
