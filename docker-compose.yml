@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  zai2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: ghcr.io/hooshidev3/zai2api:latest
+    container_name: zai2api
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - zai2api-data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - PORT=8080
+      - GATEWAY_TOKEN=${GATEWAY_TOKEN:-sk-merged-change-me}
+      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN:-}
+      - PROXY_ENCRYPTION_KEY=${PROXY_ENCRYPTION_KEY:-}
+      - EXPORT_PASSWORD=${EXPORT_PASSWORD:-}
+      - ZAI_STRATEGY=${ZAI_STRATEGY:-round-robin}
+      - ACCOUNTS_DB=/app/data/accounts.sqlite
+      - GLM_CAPTCHA_DB=/app/data/tokens.sqlite
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  zai2api-data:
+    driver: local
