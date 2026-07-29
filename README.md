@@ -1,226 +1,230 @@
 # zai2api — Unified AI Gateway
 
-> Single endpoint for **GLM (Z.AI)** and **MiMo (Xiaomi)** AI providers.
-> One auth token, multi-account support, per-account proxy.
+یک gateway واحد که دو provider هوش مصنوعی (GLM/Z.AI و MiMo/Xiaomi) را پشت یک endpoint واحد سرویس می‌دهد.
 
-## What is this?
+## Badges
 
-A unified HTTP gateway that combines two upstream AI proxy projects:
+![Build](https://github.com/hooshidev3/zai2api/actions/workflows/build.yml/badge.svg)
+![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hooshidev3/zai2api)](https://goreportcard.com/report/github.com/hooshidev3/zai2api)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-- **GLM-Free-API** (Z.AI) — OpenAI + Anthropic compatible, GLM-5/GLM-5.1 models
-- **mimo-ai-proxy** (Xiaomi MiMo) — OpenAI compatible, mimo-v2.5 models
+## ویژگی‌ها
 
-Instead of running two separate services with two endpoints and two auth tokens,
-zai2api provides a single endpoint (`POST /v1/chat/completions`) that dispatches
-to the right provider based on the `model` field in the request.
+- ✅ **یک endpoint، یک توکن** — کلاینت فقط یک آدرس و یک توکن تنظیم می‌کند
+- ✅ **Multi-Account** — برای هر دو GLM و MiMo با round-robin / least-used / random
+- ✅ **Per-Account Proxy** — HTTP/HTTPS/SOCKS5 با auth، رمزنگاری AES-256-GCM
+- ✅ **داشبورد یکپارچه** — ۷ تب، SSE real-time، dark theme، RTL
+- ✅ **Anthropic Translation** — مترجم دوطرفه برای MiMo
+- ✅ **Per-Model Features** — مدیریت feature‌های GLM از داشبورد
+- ✅ **Model Aliases** — alias‌های قابل تنظیم (مثلاً `fast` → `glm-4.5-air`)
+- ✅ **Rate Limiting** — per-model RPM/TPM با token bucket
+- ✅ **Production-ready** — WAL، retention، healthcheck، Docker
 
-## Quick start
+## Provider Capabilities
+
+| قابلیت | GLM (Z.AI) | MiMo (Xiaomi) |
+|--------|:---:|:---:|
+| OpenAI Chat | ✅ | ✅ |
+| Streaming | ✅ | ✅ |
+| Anthropic API | ✅ | ✅ (با ترجمه) |
+| Agent | ❌ | ✅ |
+| History | ❌ | ✅ |
+| File Upload | ❌ | ✅ |
+| Vision Input | ✅ | 🟡 |
+| Per-Model Features | ✅ | ❌ |
+
+جزئیات کامل: [docs/PROVIDERS.md](docs/PROVIDERS.md)
+
+## نصب سریع
+
+### Automatic (توصیه‌شده)
+
+**Linux/macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/hooshidev3/zai2api/main/install.sh | bash
+# با سرویس و autostart:
+curl -fsSL .../install.sh | bash -s -- --service --autostart
+```
+
+**Windows (PowerShell as Admin):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/hooshidev3/zai2api/main/install.ps1 | iex
+# با سرویس:
+.\install.ps1 -Service -Autostart
+```
+
+### Docker
 
 ```bash
-# Clone with submodules (important: --recursive)
+docker pull ghcr.io/hooshidev3/zai2api:latest
+docker run -d -p 8080:8080 -v zai2api-data:/app/data ghcr.io/hooshidev3/zai2api
+```
+
+یا با docker-compose:
+```bash
 git clone --recursive https://github.com/hooshidev3/zai2api.git
 cd zai2api
+docker compose up -d
+```
 
-# If you forgot --recursive:
-git submodule update --init --recursive
+### From Source
 
-# Build and run (copy .env.example first!)
-cp .env.example .env
-# Edit .env: set GATEWAY_TOKEN, SERVICE_TOKENS, etc.
+```bash
+git clone --recursive https://github.com/hooshidev3/zai2api.git
+cd zai2api
 make build
 make run
 ```
 
-The gateway starts on `http://localhost:8080`.
+> ⚠️ `--recursive` حیاتی است. بدون آن، submodule‌های `glm/` و `mimo/` خالی هستند.
 
-> ⚠️ `glm/` and `mimo/` are **git submodules** pointing to our forks:
-> - `glm/` → [hooshidev3/GLM-Free-API](https://github.com/hooshidev3/GLM-Free-API) (branch: `merged-patches`)
-> - `mimo/` → [hooshidev3/mimo-ai-proxy](https://github.com/hooshidev3/mimo-ai-proxy) (branch: `merged-patches`)
->
-> Without `--recursive` or `make clone-init`, the build will fail.
+## استفاده
 
-## Usage
+```python
+from openai import OpenAI
 
-### OpenAI-compatible
+client = OpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="sk-merged-xxx"  # GATEWAY_TOKEN
+)
+
+# مدل GLM
+response = client.chat.completions.create(
+    model="glm-5.1",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# مدل MiMo — همان کلاینت، همان توکن
+response = client.chat.completions.create(
+    model="mimo-v2.5-pro",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# با alias
+response = client.chat.completions.create(
+    model="fast",  # → glm-4.5-air
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# لیست همه مدل‌ها
+models = client.models.list()
+```
+
+### Anthropic SDK
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url="http://localhost:8080",
+    api_key="sk-merged-xxx"
+)
+
+# GLM (native)
+message = client.messages.create(
+    model="glm-5.1",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+# MiMo (با ترجمه خودکار)
+message = client.messages.create(
+    model="mimo-v2.5-pro",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+## پیکربندی
+
+متغیرهای env (در `.env`):
 
 ```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "glm-5",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": false
-  }'
+# Gateway
+PORT=8080
+GATEWAY_TOKEN=sk-merged-change-me
+DASHBOARD_TOKEN=              # برای دسترسی remote به داشبورد
+
+# GLM (Z.AI)
+GLM_CAPTCHA_DB=./data/tokens.sqlite
+ZAI_STRATEGY=round-robin      # round-robin | least-used | random
+
+# MiMo (Xiaomi)
+# SERVICE_TOKENS=             # comma-separated (یا از داشبورد اضافه کنید)
+# USER_IDS=
+# XIAOMI_CHATBOT_PHS=
+
+# Encryption
+PROXY_ENCRYPTION_KEY=         # generate: openssl rand -hex 32
+EXPORT_PASSWORD=              # برای export اکانت‌ها
+
+# Data
+ACCOUNTS_DB=./data/accounts.sqlite
 ```
 
-### Anthropic-compatible (GLM only)
+## داشبورد
+
+داشبورد در `http://localhost:8080/` با ۷ تب:
+
+| تب | محتوا |
+|----|-------|
+| Overview | KPI cards + نمودارهای زنده + recent requests |
+| Providers | وضعیت هر provider + uptime + health |
+| Accounts | مدیریت اکانت‌های GLM و MiMo + پروکسی |
+| Models | لیست مدل‌ها + per-model feature config (GLM) |
+| Agents | agent loop‌های MiMo + history |
+| Stats | نمودارهای دقیق + export CSV |
+| Settings | پیکربندی gateway + aliases + rate limits |
+
+## مستندات
+
+- [AGENTS.md](AGENTS.md) — راهنمای کامل برای AI agents و توسعه‌دهندگان
+- [docs/API.md](docs/API.md) — مرجع کامل API
+- [docs/PROVIDERS.md](docs/PROVIDERS.md) — matrix قابلیت‌ها و جزئیات provider‌ها
+- [docs/INSTALL.md](docs/INSTALL.md) — راهنمای نصب
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Docker و production
+
+## توسعه
 
 ```bash
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "glm-5",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
+# Build
+make build
 
-### List models (aggregated GLM + MiMo)
+# Test
+make test
 
-```bash
-curl http://localhost:8080/v1/models \
-  -H "Authorization: Bearer your-secret-token"
-```
+# Smoke test
+make smoke
 
-### Health check
-
-```bash
-curl http://localhost:8080/health
-```
-
-## Configuration
-
-All configuration is via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LISTEN_ADDR` | `:8080` | Listen address |
-| `GATEWAY_TOKEN` | `sk-merged-default` | Auth token for API endpoints |
-| `GLM_CAPTCHA_DB` | `./data/tokens.sqlite` | Path to GLM captcha database |
-| `VERBOSE` | `0` | Enable verbose logging |
-| `AGENT_MODE` | `0` | Enable GLM agent mode |
-| `DEFAULT_MODEL` | `glm-5` | Default model when not specified |
-| `TRUSTED_PROXIES` | `127.0.0.1/32,::1/128` | Trusted proxy CIDRs |
-
-### MiMo multi-account (env-based)
-
-```bash
-SERVICE_TOKENS="token1,token2,token3"
-USER_IDS="id1,id2,id3"
-XIAOMI_CHATBOT_PHS="ph1,ph2,ph3"
-```
-
-## Model routing
-
-| Model prefix | Provider |
-|--------------|----------|
-| `glm-*`, `GLM-*`, `zai-*` | GLM (Z.AI) |
-| `mimo*` | MiMo (Xiaomi) |
-| (default) | GLM |
-
-## Architecture: Submodule + Branch/Rebase
-
-`glm/` and `mimo/` are **git submodules** pointing to our forks
-(`hooshidev3/GLM-Free-API` and `hooshidev3/mimo-ai-proxy`). Each fork has a
-`merged-patches` branch where our integration patches live as real git commits.
-
-Syncing with upstream uses `git fetch + git rebase` (not fragile unidiff patch
-files). This combines the best of both worlds: `git clone --recursive` brings
-everything, and `make sync` rebases our patches on top of new upstream changes.
-
-```
-zai2api/
-├── cmd/server/main.go              # Entry point
-├── gateway/
-│   ├── server/                     # Main gateway (dispatcher, handlers)
-│   └── auth/                       # Timing-safe auth middleware
-├── glm/                            # SUBMODULE → hooshidev3/GLM-Free-API
-│   ├── main.go                     # package glm (func main() removed)
-│   ├── provider.go                 # Provider struct
-│   ├── exports.go                  # Public handler wrappers
-│   └── cmd/token-collector/        # Separate binary (captcha collector)
-├── mimo/                           # SUBMODULE → hooshidev3/mimo-ai-proxy
-│   └── pkg/                        # internal/ → pkg/ for cross-module import
-│       ├── authctx/                # Shared context package (no deps)
-│       ├── services/               # GetAuthFromContext, ResolveClient
-│       └── routes/                 # Per-account client threading
-├── scripts/
-│   ├── sync-submodules.sh          # Rebase submodules on latest upstream
-│   ├── glm-patches/                # GLM patch scripts + templates
-│   └── mimo-patches/               # MiMo patch scripts + templates
-├── spike/                          # Prototype proving authctx works
-├── AGENTS.md                       # Guide for AI agents
-├── .env.example                    # Environment variable template
-└── Makefile
-```
-
-## Syncing upstream updates
-
-When upstream repos release updates:
-
-```bash
-make sync
-```
-
-This script:
-1. Fetches latest from upstream (izaart95-jpg/GLM-Free-API, hugogadelha/mimo-ai-proxy)
-2. Rebases our `merged-patches` branch on top
-3. Force-pushes to our fork
-4. Updates the submodule pointer in zai2api
-
-If rebase conflicts occur, follow the on-screen instructions to resolve.
-
-## Key design decisions
-
-1. **Git submodules (fork-based) + branch/rebase** — `glm/` and `mimo/` are
-   submodules pointing to our forks. Each fork has a `merged-patches` branch
-   with our patches as real git commits. `git clone --recursive` brings everything;
-   `make sync` rebases on top of new upstream commits. No fragile patch files.
-
-2. **`authctx` package** — A leaf package (no dependencies) inside MiMo that breaks
-   the import cycle between gateway and MiMo's services package.
-
-3. **`ResolveClient` helper** — Exported function that prevents nil-pointer panics
-   by falling back to `GlobalHTTPClient` then `http.DefaultClient`.
-
-4. **Timing-safe auth** — Uses `crypto/subtle.ConstantTimeCompare` to prevent
-   timing attacks on token validation.
-
-5. **Per-account proxy ready** — HTTP client is threaded through all 9 MiMo
-   functions via `authctx.WithClient()`, enabling per-account proxy in Phase 3.
-
-## Submodule workflow (for maintainers)
-
-### Updating submodules
-
-```bash
-# Check submodule status
-make submodule-status
-
-# Sync with upstream (rebase our patches)
+# Sync submodules
 make sync
 
-# After sync, push the updated pointers
-git push origin main
+# Docker
+make docker-build
+make docker-up
 ```
 
-### Making changes to submodules
+## معماری
 
-```bash
-# Enter submodule
-cd glm
-
-# Make changes and commit
-git add -A && git commit -m "patch(glm): description"
-
-# Push to fork
-git push origin merged-patches
-
-# Return to parent repo and update pointer
-cd ..
-git add glm
-git commit -m "chore: update glm submodule"
-git push origin main
 ```
-
-See [AGENTS.md](AGENTS.md) for detailed guidance.
+Client (یک توکن)
+     │
+     ▼
+┌─────────────────────────────────────────────┐
+│  Gateway (:8080)                            │
+│  1. GatewayAuth                             │
+│  2. RateLimiter (per-model)                 │
+│  3. Alias resolution                        │
+│  4. Route by model:                         │
+│     ├─ glm-*  → GLM Provider                │
+│     └─ mimo-* → MiMo Sub-Engine (authctx)   │
+└─────────────────────────────────────────────┘
+         │                    │
+         ▼                    ▼
+   chat.z.ai        aistudio.xiaomimimo.com
+```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
-## Acknowledgments
-
-- [GLM-Free-API](https://github.com/izaart95-jpg/GLM-Free-API) by izaart95-jpg
-- [mimo-ai-proxy](https://github.com/hugogadelha/mimo-ai-proxy) by hugogadelha
+MIT
