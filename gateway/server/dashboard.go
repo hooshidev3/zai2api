@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -100,6 +101,18 @@ func DashboardAuthMiddleware(token string) gin.HandlerFunc {
 		}
 
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			// For API routes (/api/...), return a JSON 401 so the JS client
+			// can handle auth errors programmatically. For page routes,
+			// redirect to the login page.
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": gin.H{
+						"type":    "dashboard_auth_required",
+						"message": "Dashboard authentication required. Please login.",
+					},
+				})
+				return
+			}
 			c.Redirect(http.StatusFound, "/login")
 			c.Abort()
 			return

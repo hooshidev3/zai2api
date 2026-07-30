@@ -178,33 +178,47 @@ func (s *Server) mountRoutes() {
         agentGroup.Any("/*any", s.forwardToMiMoAgent)
 
         // Account management API (Phase 3)
+        // Dashboard API routes — behind DASHBOARD auth (not gateway auth).
+        // These routes are only used by the dashboard UI, so they use the same
+        // auth mechanism as the dashboard (dashboard_token cookie or localhost-only).
+        //
+        // NOTE: Public API routes (/v1/chat/completions, /v1/models, ...) above
+        // still use apiAuth (GATEWAY_TOKEN) and are unchanged.
         if s.accounts != nil {
-                apiGroup := r.Group("/api/v1", apiAuth)
+                dashboardAPI := r.Group("/api/v1", dashboardMW)
                 {
-                        apiGroup.GET("/accounts", s.handleListAccounts)
-                        apiGroup.POST("/accounts", s.handleCreateAccount)
-                        apiGroup.GET("/accounts/:id", s.handleGetAccount)
-                        apiGroup.PUT("/accounts/:id", s.handleUpdateAccount)
-                        apiGroup.DELETE("/accounts/:id", s.handleDeleteAccount)
-                        apiGroup.POST("/accounts/:id/toggle", s.handleToggleAccount)
-                        apiGroup.POST("/accounts/:id/test", s.handleTestAccount)
-                        apiGroup.GET("/models", s.handleAggregatedModels)
-                        apiGroup.PUT("/models/:id/features", s.handleUpdateModelFeatures)
+                        // Accounts
+                        dashboardAPI.GET("/accounts", s.handleListAccounts)
+                        dashboardAPI.POST("/accounts", s.handleCreateAccount)
+                        dashboardAPI.GET("/accounts/:id", s.handleGetAccount)
+                        dashboardAPI.PUT("/accounts/:id", s.handleUpdateAccount)
+                        dashboardAPI.DELETE("/accounts/:id", s.handleDeleteAccount)
+                        dashboardAPI.POST("/accounts/:id/toggle", s.handleToggleAccount)
+                        dashboardAPI.POST("/accounts/:id/test", s.handleTestAccount)
+                        dashboardAPI.GET("/accounts/export", s.handleExportAccounts)
 
-                        // Phase 5: Providers, Stats, Aliases, Rate Limits, Agents
-                        apiGroup.GET("/providers/status", s.handleProviderStatus)
-                        apiGroup.GET("/stats/detailed", s.handleDetailedStats)
-                        apiGroup.GET("/stats/export", s.handleExportStatsCSV)
-                        apiGroup.GET("/models/aliases", s.handleListAliases)
-                        apiGroup.POST("/models/aliases", s.handleAddAlias)
-                        apiGroup.DELETE("/models/aliases/:name", s.handleDeleteAlias)
-                        apiGroup.GET("/models/rate-limits", s.handleListRateLimits)
-                        apiGroup.PUT("/models/:id/rate-limit", s.handleSetRateLimit)
-                        apiGroup.DELETE("/models/:id/rate-limit", s.handleDeleteRateLimit)
-                        apiGroup.GET("/agents", s.handleListAgents)
-                        apiGroup.GET("/agents/:id", s.handleAgentStatus)
-                        apiGroup.POST("/agents/run", s.handleRunAgent)
-                        apiGroup.GET("/agents/:id/stream", s.handleAgentStream)
+                        // Models (aggregated + features + aliases + rate limits)
+                        dashboardAPI.GET("/models", s.handleAggregatedModels)
+                        dashboardAPI.PUT("/models/:id/features", s.handleUpdateModelFeatures)
+                        dashboardAPI.GET("/models/aliases", s.handleListAliases)
+                        dashboardAPI.POST("/models/aliases", s.handleAddAlias)
+                        dashboardAPI.DELETE("/models/aliases/:name", s.handleDeleteAlias)
+                        dashboardAPI.GET("/models/rate-limits", s.handleListRateLimits)
+                        dashboardAPI.PUT("/models/:id/rate-limit", s.handleSetRateLimit)
+                        dashboardAPI.DELETE("/models/:id/rate-limit", s.handleDeleteRateLimit)
+
+                        // Providers
+                        dashboardAPI.GET("/providers/status", s.handleProviderStatus)
+
+                        // Stats
+                        dashboardAPI.GET("/stats/detailed", s.handleDetailedStats)
+                        dashboardAPI.GET("/stats/export", s.handleExportStatsCSV)
+
+                        // Agents
+                        dashboardAPI.GET("/agents", s.handleListAgents)
+                        dashboardAPI.GET("/agents/:id", s.handleAgentStatus)
+                        dashboardAPI.POST("/agents/run", s.handleRunAgent)
+                        dashboardAPI.GET("/agents/:id/stream", s.handleAgentStream)
                 }
         }
 }
