@@ -1,9 +1,10 @@
-// Package server — Models API handlers (aggregated list + feature config).
+// Package server — Models API handlers (aggregated list + feature config + refresh).
 package server
 
 import (
         "encoding/json"
         "net/http"
+        "time"
 
         "github.com/gin-gonic/gin"
 )
@@ -20,25 +21,45 @@ import (
 // forwardToMiMoAndCapture (non-streaming GET only).
 func (s *Server) handleAggregatedModels(c *gin.Context) {
         type modelItem struct {
-                ID       string `json:"id"`
-                Object   string `json:"object"`
-                OwnedBy  string `json:"owned_by"`
-                Provider string `json:"_provider"`
+                ID           string                 `json:"id"`
+                Object       string                 `json:"object"`
+                OwnedBy      string                 `json:"owned_by"`
+                Provider     string                 `json:"_provider"`
+                Name         string                 `json:"name,omitempty"`
+                Description  string                 `json:"description,omitempty"`
+                Capabilities map[string]interface{} `json:"capabilities,omitempty"`
         }
 
         var models []modelItem
 
-        // GLM models — fetch from provider, fallback to static list
-        // (static list is used when Z.AI is unreachable or GLM not initialized)
+        // GLM models — fetch from provider with details, fallback to static list
         if s.glm != nil {
-                glmModels := s.glm.FetchModels()
-                if len(glmModels) == 0 {
+                detailed := s.glm.FetchModelsWithDetails()
+                if len(detailed) == 0 {
                         // Static fallback — ensures dashboard always shows GLM models
-                        glmModels = []string{"glm-5", "glm-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"}
+                        for _, id := range []string{"glm-5.2", "GLM-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"} {
+                                models = append(models, modelItem{
+                                        ID: id, Object: "model", OwnedBy: "zai", Provider: "glm", Name: id,
+                                })
+                        }
+                } else {
+                        for _, m := range detailed {
+                                models = append(models, modelItem{
+                                        ID:           m.ID,
+                                        Object:       "model",
+                                        OwnedBy:      "zai",
+                                        Provider:     "glm",
+                                        Name:         m.Name,
+                                        Description:  m.Description,
+                                        Capabilities: m.Capabilities,
+                                })
+                        }
                 }
-                for _, m := range glmModels {
+        } else {
+                // GLM not initialized — show fallback so the UI is not empty
+                for _, id := range []string{"glm-5.2", "GLM-5.1", "glm-4.7", "GLM-5-Turbo", "GLM-5v-Turbo"} {
                         models = append(models, modelItem{
-                                ID: m, Object: "model", OwnedBy: "zai", Provider: "glm",
+                                ID: id, Object: "model", OwnedBy: "zai", Provider: "glm", Name: id,
                         })
                 }
         }
@@ -55,16 +76,41 @@ func (s *Server) handleAggregatedModels(c *gin.Context) {
                 if json.Unmarshal(mimoResp, &mimoList) == nil {
                         for _, m := range mimoList.Data {
                                 models = append(models, modelItem{
-                                        ID: m.ID, Object: "model", OwnedBy: m.OwnedBy, Provider: "mimo",
+                                        ID: m.ID, Object: "model", OwnedBy: m.OwnedBy, Provider: "mimo", Name: m.ID,
                                 })
                         }
                 }
         }
 
         c.JSON(http.StatusOK, gin.H{
-                "object": "list",
-                "data":   models,
+                "object":     "list",
+                "data":       models,
+                "generated_at": nowISO(),
         })
+}
+
+// handleRefreshModels invalidates the GLM model cache and re-fetches.
+// Called by the dashboard "Refresh" button or automatically after a new
+// GLM account is added.
+func (s *Server) handleRefreshModels(c *gin.Context) {
+        if s.glm == nil {
+                c.JSON(http.StatusServiceUnavailable, gin.H{
+                        "error": gin.H{"type": "glm_unavailable", "message": "GLM provider not initialized"},
+                })
+                return
+        }
+        ids := s.glm.RefreshModels()
+        c.JSON(http.StatusOK, gin.H{
+                "refreshed":   true,
+                "model_count": len(ids),
+                "models":      ids,
+                "refreshed_at": nowISO(),
+        })
+}
+
+// nowISO returns the current time in RFC3339 format.
+func nowISO() string {
+        return time.Now().UTC().Format(time.RFC3339)
 }
 
 // handleUpdateModelFeatures updates per-model feature state for a GLM model.

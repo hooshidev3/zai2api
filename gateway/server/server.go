@@ -58,13 +58,24 @@ func NewServer(cfg *Config) (*Server, error) {
         }
 
         // 1. Initialize GLM provider
-        glmProv, err := glmapi.NewProvider(glmapi.Options{
-                CaptchaDBPath: cfg.GLMCaptchaDB,
-                Verbose:       cfg.Verbose,
-                AgentMode:     cfg.AgentMode,
-        })
+        // Two modes:
+        //   - Tokens mode: ZAI_TOKEN env set → no captcha DB needed
+        //   - Captcha DB mode: legacy, requires GLM_CAPTCHA_DB file
+        // If neither is available, GLM stays nil and will be initialized
+        // when the first GLM account is added via the dashboard.
+        glmOpts := glmapi.Options{
+                Verbose:   cfg.Verbose,
+                AgentMode: cfg.AgentMode,
+        }
+        if zaiTok := os.Getenv("ZAI_TOKEN"); zaiTok != "" {
+                glmOpts.Tokens = []string{zaiTok}
+        } else if cfg.GLMCaptchaDB != "" {
+                glmOpts.CaptchaDBPath = cfg.GLMCaptchaDB
+        }
+        glmProv, err := glmapi.NewProvider(glmOpts)
         if err != nil {
-                log.Printf("⚠️  GLM provider init failed (continuing without GLM): %v", err)
+                log.Printf("⚠️  GLM provider init skipped (continuing without GLM): %v", err)
+                log.Printf("⚠️  GLM will initialize when the first GLM account is added via the dashboard.")
         }
 
         // 2. Initialize MiMo DB
@@ -158,18 +169,9 @@ func (s *Server) mountRoutes() {
                 v1.POST("/files", s.handleFileUpload)
         }
 
-        if s.glm != nil {
-                glmGroup := r.Group("/glm", apiAuth)
-                {
-                        glmGroup.GET("/status", gin.WrapF(s.glm.StatusHandler))
-                        glmGroup.GET("/features", gin.WrapF(s.glm.FeaturesHandler))
-                        glmGroup.POST("/features", gin.WrapF(s.glm.FeaturesHandler))
-                        glmGroup.GET("/admin/stats", gin.WrapF(s.glm.StatsHandler))
-                        glmGroup.GET("/admin/clients", gin.WrapF(s.glm.ClientsHandler))
-                        glmGroup.GET("/inject.js", gin.WrapF(s.glm.InjectHandler))
-                        glmGroup.POST("/stop", gin.WrapF(s.glm.StopHandler))
-                }
-        }
+        // GLM routes — mounted here if GLM was initialized at startup,
+        // or lazily via ensureGLMProvider() when the first GLM account is added.
+        s.mountGLMRoutes()
 
         mimoGroup := r.Group("/mimo", apiAuth)
         mimoGroup.Any("/*any", s.forwardToMiMo)
@@ -190,6 +192,7 @@ func (s *Server) mountRoutes() {
                         // Accounts
                         dashboardAPI.GET("/accounts", s.handleListAccounts)
                         dashboardAPI.POST("/accounts", s.handleCreateAccount)
+                        dashboardAPI.POST("/accounts/test-connection", s.handleTestConnectionBeforeCreate)
                         dashboardAPI.GET("/accounts/:id", s.handleGetAccount)
                         dashboardAPI.PUT("/accounts/:id", s.handleUpdateAccount)
                         dashboardAPI.DELETE("/accounts/:id", s.handleDeleteAccount)
@@ -199,6 +202,7 @@ func (s *Server) mountRoutes() {
 
                         // Models (aggregated + features + aliases + rate limits)
                         dashboardAPI.GET("/models", s.handleAggregatedModels)
+                        dashboardAPI.POST("/models/refresh", s.handleRefreshModels)
                         dashboardAPI.PUT("/models/:id/features", s.handleUpdateModelFeatures)
                         dashboardAPI.GET("/models/aliases", s.handleListAliases)
                         dashboardAPI.POST("/models/aliases", s.handleAddAlias)
@@ -386,23 +390,22 @@ func (s *Server) forwardToGLMChat(c *gin.Context) {
                 return
         }
 
-        // If AccountManager has GLM accounts, select one
+        // If AccountManager has GLM accounts, select one (per-account routing)
         if s.accounts != nil {
                 acct, err := s.accounts.Next(ProviderGLM)
-                if err != nil {
-                        c.JSON(http.StatusServiceUnavailable, gin.H{
-                                "error": gin.H{"type": "no_account", "message": "no active GLM accounts"},
-                        })
+                if err == nil {
+                        c.Set("account_id", acct.ID)
+                        client := GetHTTPClient(acct.ID, acct.Proxy, 0) // 0 = no timeout (streaming)
+                        s.glm.ChatCompletionsWithAccount(c.Writer, c.Request, acct.ID, acct.ZaiToken, client)
+                        c.Abort()
                         return
                 }
-                c.Set("account_id", acct.ID)
-                client := GetHTTPClient(acct.ID, acct.Proxy, 0) // 0 = no timeout (streaming)
-                s.glm.ChatCompletionsWithAccount(c.Writer, c.Request, acct.ID, acct.ZaiToken, client)
-                c.Abort()
-                return
+                // No active GLM accounts — fall through to global session below.
+                log.Printf("[dispatch] no GLM accounts, falling back to global session (free models)")
         }
 
-        // Fallback: no AccountManager, use global session
+        // Fallback: no accounts (or no active GLM accounts), use global session.
+        // This enables free/public models to work without any account configured.
         s.glm.ChatCompletionsHandler(c.Writer, c.Request)
         c.Abort()
 }

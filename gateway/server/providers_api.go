@@ -13,6 +13,7 @@ import (
 type ProviderStatus struct {
         Name         string         `json:"name"`
         Status       string         `json:"status"` // "ready" | "degraded" | "unavailable"
+        Note         string         `json:"note,omitempty"`
         Uptime       string         `json:"uptime"`
         AccountCount int            `json:"account_count"`
         ActiveCount  int            `json:"active_count"`
@@ -23,6 +24,12 @@ type ProviderStatus struct {
 }
 
 // handleProviderStatus returns status for GLM and MiMo providers.
+//
+// GLM has four states:
+//   - glm==nil && active==0 → unavailable  "no captcha DB, no accounts"
+//   - glm==nil && active>0  → degraded     "accounts exist but provider not yet initialized"
+//   - glm!=nil && active==0 → degraded     "using global session (free models)"
+//   - glm!=nil && active>0  → ready
 func (s *Server) handleProviderStatus(c *gin.Context) {
         if s.accounts == nil {
                 c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -36,13 +43,24 @@ func (s *Server) handleProviderStatus(c *gin.Context) {
         // GLM status
         glmAccounts := s.accounts.List(ProviderGLM)
         glmActive := countActiveAccounts(glmAccounts)
-        glmStatus := "unavailable"
-        if s.glm != nil && glmActive > 0 {
-                glmStatus = "ready"
-        } else if s.glm != nil {
-                glmStatus = "degraded"
-        }
         glmReqs, glmErrs, glmLatency := aggregateAccountStats(glmAccounts)
+
+        glmStatus := "unavailable"
+        glmNote := ""
+        switch {
+        case s.glm == nil && glmActive == 0:
+                glmStatus = "unavailable"
+                glmNote = "No GLM credentials. Set ZAI_TOKEN env, provide a captcha DB, or add a GLM account."
+        case s.glm == nil && glmActive > 0:
+                glmStatus = "degraded"
+                glmNote = "GLM accounts exist but provider is not yet initialized. Initialization is in progress."
+        case s.glm != nil && glmActive == 0:
+                glmStatus = "degraded"
+                glmNote = "Using global session (free models). Add a GLM account for per-account routing."
+        case s.glm != nil && glmActive > 0:
+                glmStatus = "ready"
+                glmNote = ""
+        }
 
         glmModels := []string{}
         if s.glm != nil {
@@ -52,6 +70,7 @@ func (s *Server) handleProviderStatus(c *gin.Context) {
         providers = append(providers, ProviderStatus{
                 Name:         "GLM (Z.AI)",
                 Status:       glmStatus,
+                Note:         glmNote,
                 Uptime:       formatUptime(time.Since(s.startTime)),
                 AccountCount: len(glmAccounts),
                 ActiveCount:  glmActive,
@@ -59,26 +78,35 @@ func (s *Server) handleProviderStatus(c *gin.Context) {
                 TotalErrors:  glmErrs,
                 AvgLatency:   glmLatency,
                 Details: map[string]any{
-                        "models":       glmModels,
-                        "captcha_db":   s.cfg.GLMCaptchaDB,
-                        "agent_mode":   s.cfg.AgentMode,
+                        "models":     glmModels,
+                        "captcha_db": s.cfg.GLMCaptchaDB,
+                        "agent_mode": s.cfg.AgentMode,
                 },
         })
 
         // MiMo status
         mimoAccounts := s.accounts.List(ProviderMimo)
         mimoActive := countActiveAccounts(mimoAccounts)
-        mimoStatus := "unavailable"
-        if s.mimoEngine != nil && mimoActive > 0 {
-                mimoStatus = "ready"
-        } else if s.mimoEngine != nil {
-                mimoStatus = "degraded"
-        }
         mimoReqs, mimoErrs, mimoLatency := aggregateAccountStats(mimoAccounts)
+
+        mimoStatus := "unavailable"
+        mimoNote := ""
+        switch {
+        case s.mimoEngine == nil:
+                mimoStatus = "unavailable"
+                mimoNote = "MiMo sub-engine not initialized."
+        case mimoActive == 0:
+                mimoStatus = "degraded"
+                mimoNote = "MiMo sub-engine ready but no active accounts. Add a MiMo account."
+        default:
+                mimoStatus = "ready"
+                mimoNote = ""
+        }
 
         providers = append(providers, ProviderStatus{
                 Name:         "MiMo (Xiaomi)",
                 Status:       mimoStatus,
+                Note:         mimoNote,
                 Uptime:       formatUptime(time.Since(s.startTime)),
                 AccountCount: len(mimoAccounts),
                 ActiveCount:  mimoActive,

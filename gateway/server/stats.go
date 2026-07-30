@@ -4,6 +4,7 @@ package server
 import (
         "encoding/json"
         "fmt"
+        "strings"
         "sync"
         "time"
 
@@ -53,8 +54,19 @@ func (sc *StatsCollector) Record(rec RequestRecord) {
 }
 
 // Middleware records stats for every request that passes through.
+// Skips /proxy/* paths (metacubexd polling) and /static/* (embedded assets)
+// to avoid filling the recent-requests table with noise.
 func (sc *StatsCollector) Middleware() gin.HandlerFunc {
         return func(c *gin.Context) {
+                path := c.Request.URL.Path
+                // Skip polling/static paths so they don't pollute the stats.
+                if strings.HasPrefix(path, "/proxy/") ||
+                        strings.HasPrefix(path, "/static/") ||
+                        path == "/health" {
+                        c.Next()
+                        return
+                }
+
                 start := time.Now()
                 c.Next()
                 sc.Record(RequestRecord{
