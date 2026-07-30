@@ -203,6 +203,15 @@ body {
 .btn-primary:hover { background: #4992e8; }
 .btn-sm { padding: 3px 8px; font-size: 11px; }
 .btn-danger { color: var(--accent-red); border-color: var(--accent-red); }
+.btn-active {
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+    color: #fff;
+}
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 
 /* ─── Modal ───────────────────────────────────────────────────────── */
 

@@ -160,7 +160,15 @@
             <!-- ═══ Models Tab ═══ -->
             <section id="models" class="tab-content">
                 <div class="card">
-                    <h3>Available Models</h3>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+                        <h3 style="margin:0">Available Models</h3>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <span id="models-last-updated" style="font-size:11px;color:var(--text-muted)"></span>
+                            <button id="btn-auto-refresh-models" class="btn btn-sm" onclick="toggleModelsAutoRefresh()">⏸ Auto-Refresh: OFF</button>
+                            <button id="btn-refresh-models" class="btn btn-sm btn-primary" onclick="refreshModels()">🔄 Refresh</button>
+                        </div>
+                    </div>
+                    <div id="models-toast" style="display:none;margin-bottom:8px;padding:8px 12px;font-size:13px;border-radius:4px;background:var(--bg-secondary)"></div>
                     <table class="table" id="models-table">
                         <thead>
                             <tr>
@@ -374,11 +382,23 @@
                         <label>Notes</label>
                         <textarea id="account-notes" rows="2"></textarea>
                     </div>
+
+                    <!-- Connection test section -->
+                    <div class="form-section">
+                        <h3>Connection Test</h3>
+                        <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px 0">
+                            Test the connection before saving. The account will only be saved if the test passes.
+                        </p>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                            <button type="button" id="btn-test-connection" class="btn btn-sm" onclick="testConnectionBeforeCreate()">🔌 Test Connection</button>
+                            <span id="test-connection-status" style="font-size:12px;color:var(--text-muted)">Not tested yet</span>
+                        </div>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="closeAddAccountModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="saveAccount()">Save Account</button>
+                <button type="button" id="btn-save-account" class="btn btn-primary" onclick="saveAccount()" disabled title="Test the connection first">Save Account</button>
             </div>
         </div>
     </div>

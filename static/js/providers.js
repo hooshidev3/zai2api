@@ -1,4 +1,4 @@
-// providers.js — Provider status cards
+// providers.js — Provider status cards with Note field
 
 async function loadProviders() {
     try {
@@ -32,6 +32,14 @@ function renderProviders(providers) {
             ? `<div style="margin-top:12px;font-size:12px;color:var(--text-muted)">Models: ${models.map(m => `<code>${m}</code>`).join(' ')}</div>`
             : '';
 
+        // Note field — shown as a highlighted callout below the status line.
+        // Only render if non-empty (backend omits it when empty via omitempty).
+        const noteHtml = p.note
+            ? `<div style="margin-top:8px;padding:8px 12px;background:var(--bg-secondary);border-left:3px solid ${statusColor};border-radius:4px;font-size:12px;color:var(--text-muted)">
+                   <strong>ℹ Note:</strong> ${escapeHtmlProvider(p.note)}
+               </div>`
+            : '';
+
         return `
             <div style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;padding:20px">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -62,8 +70,20 @@ function renderProviders(providers) {
                         <div>${p.avg_latency_ms || 0}ms</div>
                     </div>
                 </div>
+                ${noteHtml}
                 ${modelsHtml}
             </div>
         `;
     }).join('');
+}
+
+// escapeHtmlProvider prevents XSS when rendering the provider note
+function escapeHtmlProvider(s) {
+    if (!s) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
